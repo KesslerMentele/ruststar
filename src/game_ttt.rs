@@ -1,3 +1,5 @@
+use std::fmt;
+use std::fmt::Formatter;
 use rand::random_range;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -18,15 +20,17 @@ pub enum GameStatus {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum MoveError {
     OutOfBounds,
-    CellOccupied,
-    GameOver
+    CellOccupied
 }
 
-pub struct Game {
-    grid: [char;9],
-    status: GameStatus,
+impl fmt::Display for MoveError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            MoveError::OutOfBounds => { write!(f, "Out of bounds") }
+            MoveError::CellOccupied => { write!(f, "Cell occupied") }
+        }
+    }
 }
-
 
 const LINES: [[usize; 3]; 8] = [
     [0, 1, 2], [3, 4, 5], [6, 7, 8],
@@ -58,6 +62,18 @@ pub fn take_computer_turn(grid: &[char; 9]) -> ([char; 9], GameStatus) {
         status = GameStatus::Draw
     }
     (new_grid, status)
+}
+
+pub fn process_player_action(grid: &[char; 9], action:usize) ->  Result<([char;9], GameStatus), MoveError> {
+    println!("process_player_action");
+    let mut new_grid = *grid;
+    if !(0..=9).contains(&action) { return Err(MoveError::OutOfBounds) }
+    if grid[action] != '-' { return Err(MoveError::CellOccupied) }
+    new_grid[action] = 'x';
+    for set in get_winning_sets(&new_grid) {
+        if check_set(&set) == Outcome::Won('x') { return  Ok((new_grid, GameStatus::Won('x'))) }
+    }
+    Ok(take_computer_turn(&new_grid))
 }
 
 fn find_actionable_move(grid: &[char; 9], target: Outcome) -> Option<usize> {

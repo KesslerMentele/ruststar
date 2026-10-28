@@ -1,0 +1,27 @@
+[package]
+name = "ruststar"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { version = "0.8.9" , features = ["macros"]}
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+sqlx = { version = "0.9.0", features = [ "runtime-tokio", "sqlite", "uuid" ] }
+uuid = { version = "1.24.0", features = ["v4", "serde"] }
+light_clone = { version = "0.4.1", features = ["uuid"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+async-trait = "0.1.91"
+datastar = {version = "0.3.1", features= ["axum"]}
+maud = { version = "0.27.0", features = [ "axum"] }
+futures = "0.3.33"
+rand = "0.10.2"
+argon2 = {version = "0.5.3" , features = ["std"]}
+bitvec = "1.1.1"
+
+[dev-dependencies]
+criterion = { version = "0.8.2", features = ["html_reports"] }
+
+[[bench]]
+name = "penalty_score_bench"
+harness = false
