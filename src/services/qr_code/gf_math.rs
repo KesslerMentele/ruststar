@@ -112,47 +112,47 @@ const EC_POLYNOMIALS: [&[u8]; 13] = [
 /// over. Addition is XOR; multiplication, inversion and division go through the
 /// `EXP_TABLE`/`LOG_TABLE` pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-struct GaloisFieldNumber(u8);
-impl GaloisFieldNumber {
+struct GF256(u8);
+impl GF256 {
     /// Field addition. Addition and subtraction coincide in GF(2^n), so
     /// this is also effectively subtraction;
-    pub(crate) fn wrapping_add(&self, p0: GaloisFieldNumber) -> GaloisFieldNumber {
-        GaloisFieldNumber(self.0 ^ p0.0)
+    pub(crate) fn wrapping_add(&self, p0: GF256) -> GF256 {
+        GF256(self.0 ^ p0.0)
     }
 }
-impl From<u8> for GaloisFieldNumber {
+impl From<u8> for GF256 {
     /// Wraps a raw byte as a field element.
     fn from(value: u8) -> Self {
-        GaloisFieldNumber(value)
+        GF256(value)
     }
 }
-impl Add for GaloisFieldNumber {
+impl Add for GF256 {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
         self.wrapping_add(rhs)
     }
 }
-impl Mul for GaloisFieldNumber {
+impl Mul for GF256 {
     type Output = Self;
     /// Field multiplication via the log/antilog tables: `a * b = alpha^(log(a) + log(b))`.
     /// Zero is handled separately since it has no logarithm.
     fn mul(self, rhs: Self) -> Self::Output {
         if self.0 == 0 || rhs.0 == 0 {
-            return GaloisFieldNumber(0)
+            return GF256(0)
         }
         // The multiplicative group has order 255, so exponents must wrap mod 255.
         let log_sum = LOG_TABLE[self.0 as usize] as u16 + LOG_TABLE[rhs.0 as usize] as u16;
-        GaloisFieldNumber(EXP_TABLE[(log_sum % 255) as usize])
+        GF256(EXP_TABLE[(log_sum % 255) as usize])
     }
 }
-impl Not for GaloisFieldNumber {
+impl Not for GF256 {
     type Output = Self;
     /// Field multiplicative inverse (`a^-1`), computed as `alpha^(255 - log(a))`.
     fn not(self) -> Self {
-        GaloisFieldNumber(EXP_TABLE[255u8.wrapping_sub(LOG_TABLE[self.0 as usize]) as usize])
+        GF256(EXP_TABLE[255u8.wrapping_sub(LOG_TABLE[self.0 as usize]) as usize])
     }
 }
-impl Div for GaloisFieldNumber {
+impl Div for GF256 {
     type Output = Self;
     /// Field division, implemented as multiplication by the divisor's inverse: `a / b = a * b^-1`.
     fn div(self, rhs: Self) -> Self {
@@ -163,8 +163,8 @@ impl Div for GaloisFieldNumber {
 /// A polynomial over GF(2^8), stored as coefficients in ascending degree order: `self.0[0]`
 /// is the constant term, `self.0[1]` the x^1 coefficient, and so on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct GaloisPolynomial(Vec<GaloisFieldNumber>);
-impl GaloisPolynomial {
+struct GF256Polynomial(Vec<GF256>);
+impl GF256Polynomial {
     /// Returns the number of coefficients stored (one more than the degree, assuming no
     /// trailing zero coefficients have been trimmed).
     fn len(&self) -> usize {
@@ -173,11 +173,11 @@ impl GaloisPolynomial {
 
     /// Multiplies the polynomial by x^m.
     fn shift(self, m: usize) -> Self {
-        let shifted = std::iter::repeat(GaloisFieldNumber::default())
+        let shifted = std::iter::repeat(GF256::default())
             .take(m)
             .chain(self.0)
             .collect();
-        GaloisPolynomial(shifted)
+        GF256Polynomial(shifted)
     }
 
     /// Reduces the polynomial mod x^n: keeps only the n lowest-degree coefficients (the terms
@@ -189,15 +189,15 @@ impl GaloisPolynomial {
 
     /// Returns true if every coefficient is zero.
     fn is_zero(&self) -> bool {
-        self.0.iter().all(|&coefficient| coefficient == GaloisFieldNumber::default())
+        self.0.iter().all(|&coefficient| coefficient == GF256::default())
     }
 
     /// Evaluates the polynomial at `x` using Horner's method.
-    fn evaluate(&self, x: GaloisFieldNumber) -> GaloisFieldNumber {
+    fn evaluate(&self, x: GF256) -> GF256 {
         self.0
             .iter()
             .rev()
-            .fold(GaloisFieldNumber::default(), |acc, &coefficient| acc * x + coefficient)
+            .fold(GF256::default(), |acc, &coefficient| acc * x + coefficient)
     }
 
     /// Returns the formal derivative of the polynomial over GF(2^n). Since the field has
@@ -205,15 +205,15 @@ impl GaloisPolynomial {
     /// out every even-power term and keeps only the odd-power ones, shifted down one degree.
     fn derivative(&self) -> Self {
         if self.0.len() <= 1 {
-            return GaloisPolynomial(Vec::new());
+            return GF256Polynomial(Vec::new());
         }
         let result = (1..self.0.len())
-            .map(|i| if i % 2 == 1 { self.0[i] } else { GaloisFieldNumber::default() })
+            .map(|i| if i % 2 == 1 { self.0[i] } else { GF256::default() })
             .collect();
-        GaloisPolynomial(result)
+        GF256Polynomial(result)
     }
 }
-impl Add for GaloisPolynomial {
+impl Add for GF256Polynomial {
     type Output = Self;
     /// Polynomial addition: coefficient-wise addition (XOR), padding the shorter operand with
     /// zero coefficients.
@@ -226,31 +226,31 @@ impl Add for GaloisPolynomial {
                 a + b
             })
             .collect();
-        GaloisPolynomial(result)
+        GF256Polynomial(result)
     }
 }
-impl Mul<GaloisPolynomial> for GaloisPolynomial {
+impl Mul<GF256Polynomial> for GF256Polynomial {
     type Output = Self;
     /// Polynomial multiplication (convolution of coefficients), producing a result with
     /// `deg(self) + deg(rhs)` as its degree.
     fn mul(self, rhs: Self) -> Self::Output {
         if self.0.is_empty() || rhs.0.is_empty() {
-            return GaloisPolynomial(Vec::new());
+            return GF256Polynomial(Vec::new());
         }
-        let mut result = vec![GaloisFieldNumber::default(); self.0.len() + rhs.0.len() - 1];
+        let mut result = vec![GF256::default(); self.0.len() + rhs.0.len() - 1];
         for (i, &a) in self.0.iter().enumerate() {
             for (j, &b) in rhs.0.iter().enumerate() {
                 result[i + j] = result[i + j] + (a * b);
             }
         }
-        GaloisPolynomial(result)
+        GF256Polynomial(result)
     }
 }
-impl Mul<GaloisFieldNumber> for GaloisPolynomial {
+impl Mul<GF256> for GF256Polynomial {
     type Output = Self;
     /// Scales every coefficient by a single field element.
-    fn mul(self, rhs: GaloisFieldNumber) -> Self::Output {
-        GaloisPolynomial(self.0.into_iter().map(|coefficient| coefficient * rhs).collect())
+    fn mul(self, rhs: GF256) -> Self::Output {
+        GF256Polynomial(self.0.into_iter().map(|coefficient| coefficient * rhs).collect())
     }
 }
 
@@ -258,7 +258,7 @@ impl Mul<GaloisFieldNumber> for GaloisPolynomial {
 /// Computes the Reed-Solomon remainder of `data` modulo the EC generator polynomial for
 /// `ec_len`, via synthetic division. This is the error-correction codeword appended after
 /// `data` to form a decodable QR data block.
-fn reed_solomon_remainder(data: GaloisPolynomial, ec_len: EcLength) -> GaloisPolynomial {
+fn reed_solomon_remainder(data: GF256Polynomial, ec_len: EcLength) -> GF256Polynomial {
     let generator = ec_len.generator_polynomial_bytes();
     let t = generator.len();
 
@@ -270,34 +270,34 @@ fn reed_solomon_remainder(data: GaloisPolynomial, ec_len: EcLength) -> GaloisPol
     // has been cancelled - the remainder.
     for degree in (t..poly.len()).rev() {
         let coef = poly[degree];
-        if coef == GaloisFieldNumber::default() {
+        if coef == GF256::default() {
             continue;
         }
-        poly[degree] = GaloisFieldNumber::default(); // cancels the generator's implicit x^t term
+        poly[degree] = GF256::default(); // cancels the generator's implicit x^t term
         for (j, &g_j) in generator.iter().enumerate() {
-            poly[degree - t + j] = poly[degree - t + j] + (coef * GaloisFieldNumber::from(g_j));
+            poly[degree - t + j] = poly[degree - t + j] + (coef * GF256::from(g_j));
         }
     }
 
     poly.truncate(t);
-    GaloisPolynomial(poly)
+    GF256Polynomial(poly)
 }
 /// Evaluates `received` at each power of alpha used by `ec_len`'s generator polynomial,
 /// producing the syndrome polynomial. All syndromes are zero iff the block decodes as
 /// error-free.
-fn compute_syndromes(received: &GaloisPolynomial, ec_len: EcLength) -> GaloisPolynomial {
+fn compute_syndromes(received: &GF256Polynomial, ec_len: EcLength) -> GF256Polynomial {
     let syndromes = (0..ec_len.value())
-        .map(|i| received.evaluate(GaloisFieldNumber::from(EXP_TABLE[i])))
+        .map(|i| received.evaluate(GF256::from(EXP_TABLE[i])))
         .collect();
-    GaloisPolynomial(syndromes)
+    GF256Polynomial(syndromes)
 }
 /// Runs the Berlekamp-Massey algorithm over `syndromes` to find the shortest linear feedback
 /// shift register that generates them. The reciprocals of its roots mark the error positions within
 /// the block.
-fn berlekamp_massey(syndromes: GaloisPolynomial) -> GaloisPolynomial {
-    let one = GaloisFieldNumber::from(1);
-    let mut current_best_locator = GaloisPolynomial(vec![one]);
-    let mut previous_best_locator = GaloisPolynomial(vec![one]);
+fn berlekamp_massey(syndromes: GF256Polynomial) -> GF256Polynomial {
+    let one = GF256::from(1);
+    let mut current_best_locator = GF256Polynomial(vec![one]);
+    let mut previous_best_locator = GF256Polynomial(vec![one]);
     let mut error_count = 0usize;
     let mut current_processed_count = 1usize;
     let mut last_discrepancy_value = one;
@@ -310,7 +310,7 @@ fn berlekamp_massey(syndromes: GaloisPolynomial) -> GaloisPolynomial {
             delta = delta + (current_best_locator.0[i] * syndromes.0[n - i]);
         }
 
-        if delta == GaloisFieldNumber::default() {
+        if delta == GF256::default() {
             current_processed_count += 1;
             continue;
         }
@@ -335,7 +335,7 @@ fn berlekamp_massey(syndromes: GaloisPolynomial) -> GaloisPolynomial {
 }
 /// Computes the error evaluator polynomial `Omega(x) = (S(x) * Lambda(x)) mod x^n`, used
 /// together with the locator's derivative by `forney_magnitude` to recover error magnitudes.
-fn error_evaluator(syndromes: GaloisPolynomial, locator: GaloisPolynomial) -> GaloisPolynomial {
+fn error_evaluator(syndromes: GF256Polynomial, locator: GF256Polynomial) -> GF256Polynomial {
     let n = syndromes.len();
     (syndromes * locator).truncate(n)
 }
@@ -344,15 +344,15 @@ fn error_evaluator(syndromes: GaloisPolynomial, locator: GaloisPolynomial) -> Ga
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LocatedError {
     position: usize,
-    locator_number: GaloisFieldNumber,
+    locator_number: GF256,
 }
 /// Searches for the roots of `locator` among the field elements `alpha^0 .. alpha^(block_length - 1)`
 /// (the Chien search), returning one `LocatedError` per root found.
-fn chien_search(locator: &GaloisPolynomial, block_length: usize) -> Vec<LocatedError> {
+fn chien_search(locator: &GF256Polynomial, block_length: usize) -> Vec<LocatedError> {
     (0..block_length)
         .filter_map(|j| {
-            let locator_number = GaloisFieldNumber::from(EXP_TABLE[j]);
-            if locator.evaluate(!locator_number) == GaloisFieldNumber::default() {
+            let locator_number = GF256::from(EXP_TABLE[j]);
+            if locator.evaluate(!locator_number) == GF256::default() {
                 Some(LocatedError { position: j, locator_number })
             } else {
                 None
@@ -362,7 +362,7 @@ fn chien_search(locator: &GaloisPolynomial, block_length: usize) -> Vec<LocatedE
 }
 /// Computes the magnitude of the error at a located root via the Forney algorithm:
 /// `locator_number * (omega(root) / derivative(root))`.
-fn forney_magnitude(omega: GaloisPolynomial, derivative: GaloisPolynomial, locator_number: GaloisFieldNumber, root: GaloisFieldNumber) -> GaloisFieldNumber {
+fn forney_magnitude(omega: GF256Polynomial, derivative: GF256Polynomial, locator_number: GF256, root: GF256) -> GF256 {
     locator_number * (omega.evaluate(root) / derivative.evaluate(root))
 }
 /// Attempts to correct errors in `block` (one QR data+EC codeword block) using Reed-Solomon
@@ -370,7 +370,7 @@ fn forney_magnitude(omega: GaloisPolynomial, derivative: GaloisPolynomial, locat
 /// are found than the locator's degree allows for, since the result can't be trusted then.
 pub(crate) fn correct_block(block: &[u8], ec_len: EcLength) -> Vec<u8> {
     let n = block.len();
-    let received = GaloisPolynomial(block.iter().rev().map(|&b| GaloisFieldNumber::from(b)).collect());
+    let received = GF256Polynomial(block.iter().rev().map(|&b| GF256::from(b)).collect());
 
     let syndromes = compute_syndromes(&received, ec_len);
     if syndromes.is_zero() {
@@ -404,82 +404,82 @@ mod tests {
     #[test]
     fn gf_add_is_xor() {
         assert_eq!(
-            GaloisFieldNumber::from(5) + GaloisFieldNumber::from(3),
-            GaloisFieldNumber::from(6)
+            GF256::from(5) + GF256::from(3),
+            GF256::from(6)
         );
     }
 
     #[test]
     fn gf_mul_matches_known_values() {
         assert_eq!(
-            GaloisFieldNumber::from(2) * GaloisFieldNumber::from(3),
-            GaloisFieldNumber::from(6)
+            GF256::from(2) * GF256::from(3),
+            GF256::from(6)
         );
         assert_eq!(
-            GaloisFieldNumber::from(0) * GaloisFieldNumber::from(200),
-            GaloisFieldNumber::from(0)
+            GF256::from(0) * GF256::from(200),
+            GF256::from(0)
         );
     }
 
     #[test]
     fn gf_div_is_inverse_of_mul() {
-        let a = GaloisFieldNumber::from(17);
-        let b = GaloisFieldNumber::from(9);
+        let a = GF256::from(17);
+        let b = GF256::from(9);
         assert_eq!((a * b) / b, a);
     }
 
     #[test]
     fn poly_add_pads_the_shorter_operand_with_zero() {
-        let a = GaloisPolynomial(vec![1, 2, 3].into_iter().map(GaloisFieldNumber::from).collect());
-        let b = GaloisPolynomial(vec![4, 5].into_iter().map(GaloisFieldNumber::from).collect());
+        let a = GF256Polynomial(vec![1, 2, 3].into_iter().map(GF256::from).collect());
+        let b = GF256Polynomial(vec![4, 5].into_iter().map(GF256::from).collect());
         let sum = a + b;
-        let expected = GaloisPolynomial(vec![1 ^ 4, 2 ^ 5, 3].into_iter().map(GaloisFieldNumber::from).collect());
+        let expected = GF256Polynomial(vec![1 ^ 4, 2 ^ 5, 3].into_iter().map(GF256::from).collect());
         assert_eq!(sum, expected);
     }
 
     #[test]
     fn poly_evaluate_at_zero_returns_constant_term() {
-        let poly = GaloisPolynomial(vec![7, 1, 1].into_iter().map(GaloisFieldNumber::from).collect());
-        assert_eq!(poly.evaluate(GaloisFieldNumber::from(0)), GaloisFieldNumber::from(7));
+        let poly = GF256Polynomial(vec![7, 1, 1].into_iter().map(GF256::from).collect());
+        assert_eq!(poly.evaluate(GF256::from(0)), GF256::from(7));
     }
 
     #[test]
     fn poly_evaluate_at_one_xors_all_coefficients() {
-        let poly = GaloisPolynomial(vec![1, 2, 3].into_iter().map(GaloisFieldNumber::from).collect());
-        assert_eq!(poly.evaluate(GaloisFieldNumber::from(1)), GaloisFieldNumber::from(1 ^ 2 ^ 3));
+        let poly = GF256Polynomial(vec![1, 2, 3].into_iter().map(GF256::from).collect());
+        assert_eq!(poly.evaluate(GF256::from(1)), GF256::from(1 ^ 2 ^ 3));
     }
 
     #[test]
     fn poly_shift_by_zero_is_identity() {
-        let poly = GaloisPolynomial(vec![1, 2, 3].into_iter().map(GaloisFieldNumber::from).collect());
+        let poly = GF256Polynomial(vec![1, 2, 3].into_iter().map(GF256::from).collect());
         assert_eq!(poly.clone().shift(0), poly);
     }
 
     #[test]
     fn poly_shift_prepends_zero_low_order_coefficients() {
-        let poly = GaloisPolynomial(vec![1, 2, 3].into_iter().map(GaloisFieldNumber::from).collect());
-        let expected = GaloisPolynomial(vec![0, 0, 1, 2, 3].into_iter().map(GaloisFieldNumber::from).collect());
+        let poly = GF256Polynomial(vec![1, 2, 3].into_iter().map(GF256::from).collect());
+        let expected = GF256Polynomial(vec![0, 0, 1, 2, 3].into_iter().map(GF256::from).collect());
         assert_eq!(poly.shift(2), expected);
     }
 
     #[test]
     fn poly_evaluate_matches_horner_by_hand() {
         // P(x) = 3x^2 + 2x + 1, evaluated at x = 5.
-        let poly = GaloisPolynomial(vec![1, 2, 3].into_iter().map(GaloisFieldNumber::from).collect());
-        let x = GaloisFieldNumber::from(5);
-        let expected = (GaloisFieldNumber::from(3) * x + GaloisFieldNumber::from(2)) * x + GaloisFieldNumber::from(1);
+        let poly = GF256Polynomial(vec![1, 2, 3].into_iter().map(GF256::from).collect());
+        let x = GF256::from(5);
+        let expected = (GF256::from(3) * x + GF256::from(2)) * x + GF256::from(1);
         assert_eq!(poly.evaluate(x), expected);
     }
 
     #[test]
     fn poly_mul_by_scalar_scales_every_coefficient() {
-        let poly = GaloisPolynomial(vec![1, 2, 3].into_iter().map(GaloisFieldNumber::from).collect());
-        let scaled = poly * GaloisFieldNumber::from(2);
-        let expected = GaloisPolynomial(
+        let poly = GF256Polynomial(vec![1, 2, 3].into_iter().map(GF256::from).collect());
+        let scaled = poly * GF256::from(2);
+        let expected = GF256Polynomial(
             vec![
-                GaloisFieldNumber::from(1) * GaloisFieldNumber::from(2),
-                GaloisFieldNumber::from(2) * GaloisFieldNumber::from(2),
-                GaloisFieldNumber::from(3) * GaloisFieldNumber::from(2),
+                GF256::from(1) * GF256::from(2),
+                GF256::from(2) * GF256::from(2),
+                GF256::from(3) * GF256::from(2),
             ]
         );
         assert_eq!(scaled, expected);
@@ -488,21 +488,21 @@ mod tests {
     #[test]
     fn poly_mul_computes_convolution() {
         // (1 + x) * (1 + x) = 1 + 2x + x^2, but GF(2) addition is XOR so the x term cancels.
-        let a = GaloisPolynomial(vec![GaloisFieldNumber::from(1), GaloisFieldNumber::from(1)]);
+        let a = GF256Polynomial(vec![GF256::from(1), GF256::from(1)]);
         let product = a.clone() * a;
-        let expected = GaloisPolynomial(vec![1, 0, 1].into_iter().map(GaloisFieldNumber::from).collect());
+        let expected = GF256Polynomial(vec![1, 0, 1].into_iter().map(GF256::from).collect());
         assert_eq!(product, expected);
     }
 
-    fn generator_as_poly(ec_len: EcLength) -> GaloisPolynomial {
-        GaloisPolynomial(ec_len.generator_polynomial_bytes().iter().map(|&b| GaloisFieldNumber::from(b)).collect())
+    fn generator_as_poly(ec_len: EcLength) -> GF256Polynomial {
+        GF256Polynomial(ec_len.generator_polynomial_bytes().iter().map(|&b| GF256::from(b)).collect())
     }
 
     #[test]
     fn reed_solomon_remainder_of_empty_data_is_zero() {
         let ec_len = EcLength::try_from(7).unwrap();
-        let remainder = reed_solomon_remainder(GaloisPolynomial(Vec::new()), ec_len);
-        assert_eq!(remainder, GaloisPolynomial(vec![GaloisFieldNumber::default(); 7]));
+        let remainder = reed_solomon_remainder(GF256Polynomial(Vec::new()), ec_len);
+        assert_eq!(remainder, GF256Polynomial(vec![GF256::default(); 7]));
     }
 
     #[test]
@@ -511,8 +511,8 @@ mod tests {
         // G(x)'s own lower t coefficients (since G is monic: x^t = G(x) - lower terms,
         // and subtraction is XOR). So the remainder is just d0 * generator.
         for &ec_len in EcLength::ALL.iter() {
-            let d0 = GaloisFieldNumber::from(200);
-            let remainder = reed_solomon_remainder(GaloisPolynomial(vec![d0]), ec_len);
+            let d0 = GF256::from(200);
+            let remainder = reed_solomon_remainder(GF256Polynomial(vec![d0]), ec_len);
             let expected = generator_as_poly(ec_len) * d0;
             assert_eq!(remainder, expected, "mismatch for ec_len = {}", ec_len.value());
         }
@@ -521,23 +521,23 @@ mod tests {
     #[test]
     fn compute_syndromes_of_empty_received_is_zero() {
         let ec_len = EcLength::try_from(7).unwrap();
-        let syndromes = compute_syndromes(&GaloisPolynomial(Vec::new()), ec_len);
-        assert_eq!(syndromes, GaloisPolynomial(vec![GaloisFieldNumber::default(); 7]));
+        let syndromes = compute_syndromes(&GF256Polynomial(Vec::new()), ec_len);
+        assert_eq!(syndromes, GF256Polynomial(vec![GF256::default(); 7]));
     }
 
     #[test]
     fn compute_syndromes_of_a_constant_polynomial_is_that_constant_everywhere() {
         // A constant polynomial evaluates to itself at every point, alpha^i included.
-        let c = GaloisFieldNumber::from(42);
+        let c = GF256::from(42);
         let ec_len = EcLength::try_from(10).unwrap();
-        let syndromes = compute_syndromes(&GaloisPolynomial(vec![c]), ec_len);
-        assert_eq!(syndromes, GaloisPolynomial(vec![c; 10]));
+        let syndromes = compute_syndromes(&GF256Polynomial(vec![c]), ec_len);
+        assert_eq!(syndromes, GF256Polynomial(vec![c; 10]));
     }
 
     #[test]
     fn compute_syndromes_length_matches_ec_len() {
         for &ec_len in EcLength::ALL.iter() {
-            let received = GaloisPolynomial(vec![1, 2, 3].into_iter().map(GaloisFieldNumber::from).collect());
+            let received = GF256Polynomial(vec![1, 2, 3].into_iter().map(GF256::from).collect());
             let syndromes = compute_syndromes(&received, ec_len);
             assert_eq!(syndromes.len(), ec_len.value());
         }
@@ -547,9 +547,9 @@ mod tests {
     fn berlekamp_massey_of_all_zero_syndromes_is_the_trivial_locator() {
         // No errors means every syndrome is zero, and the algorithm never finds a
         // nonzero discrepancy to react to, so it should leave the locator at 1.
-        let syndromes = GaloisPolynomial(vec![GaloisFieldNumber::default(); 6]);
+        let syndromes = GF256Polynomial(vec![GF256::default(); 6]);
         let locator = berlekamp_massey(syndromes);
-        assert_eq!(locator, GaloisPolynomial(vec![GaloisFieldNumber::from(1)]));
+        assert_eq!(locator, GF256Polynomial(vec![GF256::from(1)]));
     }
 
     #[test]
@@ -558,16 +558,16 @@ mod tests {
         // S_i = X^i = alpha^i (taking X = alpha^1), whose minimal polynomial is 1 + X*x.
         // Hand-traced against the implementation for i = 0..4 to confirm this by hand,
         // not just by re-deriving the same formula the code computes.
-        let x = GaloisFieldNumber::from(EXP_TABLE[1]);
-        let syndromes = GaloisPolynomial((0..4).map(|i| GaloisFieldNumber::from(EXP_TABLE[i])).collect());
+        let x = GF256::from(EXP_TABLE[1]);
+        let syndromes = GF256Polynomial((0..4).map(|i| GF256::from(EXP_TABLE[i])).collect());
         let locator = berlekamp_massey(syndromes);
-        assert_eq!(locator, GaloisPolynomial(vec![GaloisFieldNumber::from(1), x]));
+        assert_eq!(locator, GF256Polynomial(vec![GF256::from(1), x]));
     }
 
     #[test]
     fn chien_search_with_trivial_locator_finds_no_errors() {
         // Lambda(x) = 1 (a constant) evaluates to 1 everywhere, so it has no roots at all.
-        let locator = GaloisPolynomial(vec![GaloisFieldNumber::from(1)]);
+        let locator = GF256Polynomial(vec![GF256::from(1)]);
         assert!(chien_search(&locator, 10).is_empty());
     }
 
@@ -576,8 +576,8 @@ mod tests {
         // Lambda(x) = 1 + X*x has its one root at x = X^-1, i.e. at alpha^-j0 where
         // X = alpha^j0. So the search should match only at j = j0, reporting locator_number = X.
         let j0 = 1;
-        let x = GaloisFieldNumber::from(EXP_TABLE[j0]);
-        let locator = GaloisPolynomial(vec![GaloisFieldNumber::from(1), x]);
+        let x = GF256::from(EXP_TABLE[j0]);
+        let locator = GF256Polynomial(vec![GF256::from(1), x]);
 
         let errors = chien_search(&locator, 4);
 
@@ -587,7 +587,7 @@ mod tests {
     // Builds a valid systematic codeword (in the natural, MSB-first byte order a real QR
     // code would be read in) for the given data, using the already-verified encoder.
     fn encode_block(data_bytes: &[u8], ec_len: EcLength) -> Vec<u8> {
-        let data = GaloisPolynomial(data_bytes.iter().map(|&b| GaloisFieldNumber::from(b)).collect());
+        let data = GF256Polynomial(data_bytes.iter().map(|&b| GF256::from(b)).collect());
         let remainder = reed_solomon_remainder(data.clone(), ec_len);
         let codeword = data.shift(ec_len.value()) + remainder;
         codeword.0.iter().rev().map(|c| c.0).collect()

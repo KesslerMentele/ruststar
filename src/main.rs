@@ -4,12 +4,13 @@ mod game_ttt;
 mod sessions;
 
 use std::convert::Infallible;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use axum::{Router};
 use axum::response::{Sse, sse::{Event}};
 use serde::Deserialize;
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use futures::stream;
 use crate::pages::{portfolio, todo, toys};
 use crate::services::{TodoService, memory::InMemoryTodoService, sqlite::SqliteTodoService, UserService, sqlite::SqliteUserService};
@@ -37,10 +38,16 @@ async fn main() {
     println!("connecting to sqlite://todos.db");
     let pool = SqlitePoolOptions::new()
             .max_connections(5)
-            .connect("sqlite://todos.db")
+            .connect_with(SqliteConnectOptions::from_str("sqlite://todos.db").unwrap().create_if_missing(true))
             .await
             .unwrap();
     println!("connected to sqlite://todos.db");
+
+    sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+    println!("schema initialized");
 
     let sqlite_todo_service: Arc<dyn TodoService> = Arc::new(SqliteTodoService { pool: pool.clone() });
     let sqlite_user_service: Arc<dyn UserService> = Arc::new(SqliteUserService { pool: pool.clone() });

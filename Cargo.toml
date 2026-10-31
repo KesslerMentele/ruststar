@@ -18,6 +18,7 @@ futures = "0.3.33"
 rand = "0.10.2"
 argon2 = {version = "0.5.3" , features = ["std"]}
 bitvec = "1.1.1"
+encoding_rs = { version = "0.8.44", features = ["fast-kanji-encode"] }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }

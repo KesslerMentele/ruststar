@@ -16,15 +16,14 @@
 //  - Interleave data and return a bitvec of interleaved EC and data blocks
 
 use bitvec::prelude::*;
+use encoding_rs::{EncoderResult, SHIFT_JIS};
 use super::bits::write_bits;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EncodeError {
     /// A character isn't part of the character set the mode being encoded requires.
     InvalidChar(char),
-    /// Kanji mode packs two-byte Shift-JIS code points, so its input must have even length.
-    OddKanjiLength,
-    /// A Shift-JIS code point outside the two ranges QR Kanji mode can represent.
+    /// A double-byte Shift-JIS code point outside the two ranges QR Kanji mode can represent.
     KanjiOutOfRange(u16),
     /// An ECI designator outside the 0..=999999 range the three encoding lengths can hold.
     EciOutOfRange(u32),
@@ -34,7 +33,7 @@ pub(crate) enum EncodeError {
 
 /// Maps a character to its value in QR's 45-character alphanumeric set, or `None` if it isn't
 /// a member of that set.
-fn alphanumeric_value(c: char) -> Option<u8> {
+pub(crate) fn alphanumeric_value(c: char) -> Option<u8> {
     match c {
         '0'..='9' => Some(c as u8 - b'0'),
         'A'..='Z' => Some(10 + (c as u8 - b'A')),
@@ -53,7 +52,7 @@ fn alphanumeric_value(c: char) -> Option<u8> {
 
 /// Encodes `data` (ASCII digits only) as QR Numeric mode data bits: digits are grouped by
 /// three, each group packed as 10 bits, except a trailing group of two (7 bits) or one (4 bits).
-pub(crate) fn encode_numeric(data: &str) -> Result<BitVec<u8, Msb0>, EncodeError> {
+pub(crate) fn encode_numeric(data: &str) -> Result<BitVec<u8, Lsb0>, EncodeError> {
     let digits = data
         .chars()
         .map(|c| c.to_digit(10).ok_or(EncodeError::InvalidChar(c)))
@@ -76,7 +75,7 @@ pub(crate) fn encode_numeric(data: &str) -> Result<BitVec<u8, Msb0>, EncodeError
 /// Encodes `data` (QR's 45-character alphanumeric set) as QR Alphanumeric mode data bits:
 /// characters are grouped in pairs, each pair packed as `first * 45 + second` in 11 bits,
 /// except a trailing single character (6 bits).
-pub(crate) fn encode_alphanumeric(data: &str) -> Result<BitVec<u8, Msb0>, EncodeError> {
+pub(crate) fn encode_alphanumeric(data: &str) -> Result<BitVec<u8, Lsb0>, EncodeError> {
     let values = data
         .chars()
         .map(|c| alphanumeric_value(c).ok_or(EncodeError::InvalidChar(c)))
@@ -93,27 +92,47 @@ pub(crate) fn encode_alphanumeric(data: &str) -> Result<BitVec<u8, Msb0>, Encode
     Ok(bits)
 }
 
-/// Encodes `data` as QR Byte mode data bits: every byte is packed as-is, 8 bits each. Every
-/// byte value is valid, so this can't fail.
-pub(crate) fn encode_byte(data: &[u8]) -> BitVec<u8, Msb0> {
-    data.view_bits::<Msb0>().to_bitvec()
-}
+/// Maps a character to its double-byte Shift-JIS code point, if it has one in either of the two
+/// ranges QR Kanji mode can represent (0x8140..=0x9FFC, 0xE040..=0xEBBF).
+pub(crate) fn shift_jis_kanji(c: char) -> Result<u16, EncodeError> {
+    let mut utf8 = [0u8; 4];
+    let mut sjis = [0u8; 2];
+    let (result, _, written) = SHIFT_JIS
+        .new_encoder()
+        .encode_from_utf8_without_replacement(c.encode_utf8(&mut utf8), &mut sjis, true);
 
-/// Encodes `data` (raw Shift-JIS bytes, caller's responsibility to have already transcoded)
-/// as QR Kanji mode data bits: each two-byte Shift-JIS code point is reduced into its QR
-/// subset range and packed into 13 bits.
-pub(crate) fn encode_kanji(data: &[u8]) -> Result<BitVec<u8, Msb0>, EncodeError> {
-    if data.len() % 2 != 0 {
-        return Err(EncodeError::OddKanjiLength);
+    // Unmappable chars and single-byte ones (ASCII, half-width katakana) aren't Kanji.
+    if !matches!(result, EncoderResult::InputEmpty) || written != 2 {
+        return Err(EncodeError::InvalidChar(c));
     }
 
+    let code_point = u16::from_be_bytes(sjis);
+    match code_point {
+        0x8140..=0x9FFC | 0xE040..=0xEBBF => Ok(code_point),
+        _ => Err(EncodeError::KanjiOutOfRange(code_point)),
+    }
+}
+
+/// Encodes `data` as QR Byte mode data bits: every byte is packed as-is, 8 bits each. Every
+/// byte value is valid, so this can't fail.
+pub(crate) fn encode_byte(data: &[u8]) -> BitVec<u8, Lsb0> {
+    let mut bits = BitVec::with_capacity(data.len() * 8);
+    for &byte in data {
+        write_bits(&mut bits, byte as u32, 8);
+    }
+    bits
+}
+
+/// Encodes `data` as QR Kanji mode data bits: each char is transcoded to its two-byte Shift-JIS
+/// code point, reduced into its QR subset range and packed into 13 bits.
+pub(crate) fn encode_kanji(data: &str) -> Result<BitVec<u8, Lsb0>, EncodeError> {
     let mut bits = BitVec::new();
-    for pair in data.chunks_exact(2) {
-        let code_point = u16::from_be_bytes([pair[0], pair[1]]);
-        let reduced = match code_point {
-            0x8140..=0x9FFC => code_point - 0x8140,
-            0xE040..=0xEBBF => code_point - 0xC140,
-            _ => return Err(EncodeError::KanjiOutOfRange(code_point)),
+    for c in data.chars() {
+        let code_point = shift_jis_kanji(c)?;
+        let reduced = if code_point < 0xE040 {
+            code_point - 0x8140
+        } else {
+            code_point - 0xC140
         };
         let value = (reduced >> 8) * 0xC0 + (reduced & 0xFF);
         write_bits(&mut bits, value as u32, 13);
@@ -124,7 +143,7 @@ pub(crate) fn encode_kanji(data: &[u8]) -> Result<BitVec<u8, Msb0>, EncodeError>
 /// Encodes an ECI assignment number as QR ECI mode data bits, using the UTF-8-like
 /// variable-length prefix scheme the spec defines: 1 byte for 0..=127, 2 bytes for
 /// 128..=16383, 3 bytes for 16384..=999999.
-pub(crate) fn encode_eci(designator: u32) -> Result<BitVec<u8, Msb0>, EncodeError> {
+pub(crate) fn encode_eci(designator: u32) -> Result<BitVec<u8, Lsb0>, EncodeError> {
     let mut bits = BitVec::new();
     match designator {
         0..=127 => {
@@ -146,20 +165,21 @@ pub(crate) fn encode_eci(designator: u32) -> Result<BitVec<u8, Msb0>, EncodeErro
 
 /// Encodes FNC1-in-first-position. It carries no data of its own beyond its mode indicator
 /// (written by the caller), so there are no data bits to append.
-pub(crate) fn encode_fnc1_first_position() -> BitVec<u8, Msb0> {
+pub(crate) fn encode_fnc1_first_position() -> BitVec<u8, Lsb0> {
     BitVec::new()
 }
 
 /// Encodes FNC1-in-second-position's Application Indicator as QR data bits. Resolving an
-/// AI (a digit or letter, per AIM spec) to its 8-bit value is the caller's responsibility, as
-/// with `encode_kanji`'s Shift-JIS transcoding.
-pub(crate) fn encode_fnc1_second_position(application_indicator: u8) -> BitVec<u8, Msb0> {
-    application_indicator.view_bits::<Msb0>().to_bitvec()
+/// AI (a digit or letter, per AIM spec) to its 8-bit value is the caller's responsibility.
+pub(crate) fn encode_fnc1_second_position(application_indicator: u8) -> BitVec<u8, Lsb0> {
+    let mut bits = BitVec::new();
+    write_bits(&mut bits, application_indicator as u32, 8);
+    bits
 }
 
 /// Encodes Structured Append's header fields as QR data bits: a 4-bit sequence number, a
 /// 4-bit total-symbol count (both 0..=15), and an 8-bit parity byte.
-pub(crate) fn encode_structured_append(sequence_number: u8, total_symbols: u8, parity: u8, ) -> Result<BitVec<u8, Msb0>, EncodeError> {
+pub(crate) fn encode_structured_append(sequence_number: u8, total_symbols: u8, parity: u8, ) -> Result<BitVec<u8, Lsb0>, EncodeError> {
     if sequence_number > 15 || total_symbols > 15 {
         return Err(EncodeError::StructuredAppendOutOfRange);
     }
@@ -233,41 +253,53 @@ mod tests {
 
     #[test]
     fn kanji_matches_the_iso_18004_example() {
-        // ISO/IEC 18004 Annex I's worked example: Shift-JIS 0x935F.
+        // ISO/IEC 18004 Annex I's worked example: 点, Shift-JIS 0x935F.
         let expected = bits![0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1];
-        assert_eq!(encode_kanji(&[0x93, 0x5F]).unwrap(), expected);
+        assert_eq!(encode_kanji("点").unwrap(), expected);
     }
 
     #[test]
-    fn kanji_rejects_an_odd_length_input() {
-        assert_eq!(encode_kanji(&[0x93]).unwrap_err(), EncodeError::OddKanjiLength);
+    fn kanji_transcodes_both_shift_jis_ranges() {
+        assert_eq!(shift_jis_kanji('点'), Ok(0x935F));
+        // 茗 sits in the second range, at Shift-JIS 0xE4AA.
+        assert_eq!(shift_jis_kanji('茗'), Ok(0xE4AA));
+    }
+
+    #[test]
+    fn kanji_rejects_single_byte_shift_jis_chars() {
+        assert_eq!(encode_kanji("a").unwrap_err(), EncodeError::InvalidChar('a'));
+        // Half-width katakana is a single Shift-JIS byte.
+        assert_eq!(encode_kanji("ｱ").unwrap_err(), EncodeError::InvalidChar('ｱ'));
+    }
+
+    #[test]
+    fn kanji_rejects_a_char_with_no_shift_jis_mapping() {
+        assert_eq!(encode_kanji("é").unwrap_err(), EncodeError::InvalidChar('é'));
     }
 
     #[test]
     fn kanji_rejects_a_code_point_outside_either_range() {
-        assert_eq!(
-            encode_kanji(&[0x00, 0x00]).unwrap_err(),
-            EncodeError::KanjiOutOfRange(0x0000)
-        );
+        // 纊 only exists in the IBM extension block, at Shift-JIS 0xFA5C.
+        assert_eq!(encode_kanji("纊").unwrap_err(), EncodeError::KanjiOutOfRange(0xFA5C));
     }
 
     #[test]
     fn eci_one_byte_range_has_a_zero_prefix() {
-        let mut expected = bits![u8, Msb0; 0].to_bitvec();
+        let mut expected = bits![u8, Lsb0; 0].to_bitvec();
         write_bits(&mut expected, 127, 7);
         assert_eq!(encode_eci(127).unwrap(), expected);
     }
 
     #[test]
     fn eci_two_byte_range_has_a_10_prefix() {
-        let mut expected = bits![u8, Msb0; 1, 0].to_bitvec();
+        let mut expected = bits![u8, Lsb0; 1, 0].to_bitvec();
         write_bits(&mut expected, 128, 14);
         assert_eq!(encode_eci(128).unwrap(), expected);
     }
 
     #[test]
     fn eci_three_byte_range_has_a_110_prefix() {
-        let mut expected = bits![u8, Msb0; 1, 1, 0].to_bitvec();
+        let mut expected = bits![u8, Lsb0; 1, 1, 0].to_bitvec();
         write_bits(&mut expected, 16_384, 21);
         assert_eq!(encode_eci(16_384).unwrap(), expected);
     }

@@ -139,14 +139,14 @@ pub fn calculate_finder_pattern_score(bits: &BitSlice<u8, Lsb0>, width: usize, h
 
     score
 }
-
+// uses the built-in count_ones fn inside BitSlice to get the ratio. 
 pub fn calculate_ratio_score(bits: &BitSlice<u8, Lsb0>) -> usize {
     let ones = bits.count_ones();
     let percent = (ones / bits.len()) * 100;
     ((percent.div_ceil(5) * 5).abs_diff(50) / 5).min(((percent / 5) * 5).abs_diff(50) / 5)
 }
 
-pub fn penalty_score(bits: &BitSlice<u8, Lsb0>, width: usize, height: usize) -> MaskEvaluation {
+pub fn penalty_score_st(bits: &BitSlice<u8, Lsb0>, width: usize, height: usize) -> MaskEvaluation {
     let horizontal_score = calculate_horizontal_score(bits, width, height);
     let vertical_score = calculate_vertical_score(bits, width, height);
     let squares_score = calculate_squares_score(bits, width, height);
@@ -206,11 +206,11 @@ const MT_THRESHOLD_AREA: usize = 97 * 97;
 
 /// Picks `penalty_score` or `penalty_score_mt`, whichever benchmarked faster for a grid this
 /// size, instead of committing to one strategy for every grid.
-pub fn penalty_score_adaptive(bits: &BitSlice<u8, Lsb0>, width: usize, height: usize) -> MaskEvaluation {
+pub fn penalty_score(bits: &BitSlice<u8, Lsb0>, width: usize, height: usize) -> MaskEvaluation {
     if width * height >= MT_THRESHOLD_AREA {
         penalty_score_mt(bits, width, height)
     } else {
-        penalty_score(bits, width, height)
+        penalty_score_st(bits, width, height)
     }
 }
 
@@ -388,7 +388,7 @@ mod tests {
     fn penalty_score_mt_matches_penalty_score() {
         for (width, height, seed) in [(21, 21, 1), (25, 25, 42), (1, 40, 7), (40, 1, 7), (6, 6, 99)] {
             let bits = random_bits(width * height, seed);
-            let single = penalty_score(&bits, width, height);
+            let single = penalty_score_st(&bits, width, height);
             let multi = penalty_score_mt(&bits, width, height);
             assert_eq!(single.horizontal, multi.horizontal, "horizontal mismatch for {width}x{height}");
             assert_eq!(single.vertical, multi.vertical, "vertical mismatch for {width}x{height}");
@@ -405,8 +405,8 @@ mod tests {
         // it (multithreaded path), and 177 sits well above it (multithreaded path too).
         for (width, height, seed) in [(21, 21, 1), (57, 57, 2), (97, 97, 3), (177, 177, 4)] {
             let bits = random_bits(width * height, seed);
-            let adaptive = penalty_score_adaptive(&bits, width, height);
-            let single = penalty_score(&bits, width, height);
+            let adaptive = penalty_score(&bits, width, height);
+            let single = penalty_score_st(&bits, width, height);
             let multi = penalty_score_mt(&bits, width, height);
 
             assert_eq!(adaptive.total, single.total, "adaptive vs single-threaded mismatch for {width}x{height}");

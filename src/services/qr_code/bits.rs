@@ -1,15 +1,16 @@
 use bitvec::prelude::*;
 
-/// Appends the low `bit_length` bits of `value` (most-significant bit first) onto `bits`.
-/// `value` must already fit in `bit_length` bits — a programmer error, not user input, so it's
+/// Appends the low `bit_length` bits of `value` (most-significant bit first, as the QR spec
+/// requires) onto `bits`. The storage itself is `Lsb0`; that only affects how bits are packed
+/// into each backing byte, not the logical order they're appended in. `value` must already fit in `bit_length` bits — a programmer error, not user input, so it's
 /// only checked in debug builds, not propagated as a `Result`.
-pub(crate) fn write_bits(bits: &mut BitVec<u8, Msb0>, value: u32, bit_length: usize) {
+pub(crate) fn write_bits(bits: &mut BitVec<u8, Lsb0>, value: u32, bit_length: usize) {
     debug_assert!((1..=32).contains(&bit_length), "bit_length must be in 1..=32");
     debug_assert!(
         bit_length == 32 || value < (1u32 << bit_length),
         "value {value} does not fit in {bit_length} bits"
     );
-    bits.extend_from_bitslice(&value.view_bits::<Msb0>()[32 - bit_length..]);
+    bits.extend((0..bit_length).rev().map(|i| (value >> i) & 1 == 1));
 }
 
 #[cfg(test)]
