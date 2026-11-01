@@ -17,6 +17,7 @@
 
 use bitvec::prelude::*;
 use encoding_rs::{EncoderResult, SHIFT_JIS};
+use crate::services::qr_code::segmenter::SegmentPlan;
 use super::bits::write_bits;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +53,7 @@ pub(crate) fn alphanumeric_value(c: char) -> Option<u8> {
 
 /// Encodes `data` (ASCII digits only) as QR Numeric mode data bits: digits are grouped by
 /// three, each group packed as 10 bits, except a trailing group of two (7 bits) or one (4 bits).
-pub(crate) fn encode_numeric(data: &str) -> Result<BitVec<u8, Lsb0>, EncodeError> {
+fn encode_numeric(data: &str) -> Result<BitVec<u8, Lsb0>, EncodeError> {
     let digits = data
         .chars()
         .map(|c| c.to_digit(10).ok_or(EncodeError::InvalidChar(c)))
@@ -75,7 +76,7 @@ pub(crate) fn encode_numeric(data: &str) -> Result<BitVec<u8, Lsb0>, EncodeError
 /// Encodes `data` (QR's 45-character alphanumeric set) as QR Alphanumeric mode data bits:
 /// characters are grouped in pairs, each pair packed as `first * 45 + second` in 11 bits,
 /// except a trailing single character (6 bits).
-pub(crate) fn encode_alphanumeric(data: &str) -> Result<BitVec<u8, Lsb0>, EncodeError> {
+fn encode_alphanumeric(data: &str) -> Result<BitVec<u8, Lsb0>, EncodeError> {
     let values = data
         .chars()
         .map(|c| alphanumeric_value(c).ok_or(EncodeError::InvalidChar(c)))
@@ -115,7 +116,7 @@ pub(crate) fn shift_jis_kanji(c: char) -> Result<u16, EncodeError> {
 
 /// Encodes `data` as QR Byte mode data bits: every byte is packed as-is, 8 bits each. Every
 /// byte value is valid, so this can't fail.
-pub(crate) fn encode_byte(data: &[u8]) -> BitVec<u8, Lsb0> {
+fn encode_byte(data: &[u8]) -> BitVec<u8, Lsb0> {
     let mut bits = BitVec::with_capacity(data.len() * 8);
     for &byte in data {
         write_bits(&mut bits, byte as u32, 8);
@@ -125,7 +126,7 @@ pub(crate) fn encode_byte(data: &[u8]) -> BitVec<u8, Lsb0> {
 
 /// Encodes `data` as QR Kanji mode data bits: each char is transcoded to its two-byte Shift-JIS
 /// code point, reduced into its QR subset range and packed into 13 bits.
-pub(crate) fn encode_kanji(data: &str) -> Result<BitVec<u8, Lsb0>, EncodeError> {
+fn encode_kanji(data: &str) -> Result<BitVec<u8, Lsb0>, EncodeError> {
     let mut bits = BitVec::new();
     for c in data.chars() {
         let code_point = shift_jis_kanji(c)?;
@@ -143,7 +144,7 @@ pub(crate) fn encode_kanji(data: &str) -> Result<BitVec<u8, Lsb0>, EncodeError> 
 /// Encodes an ECI assignment number as QR ECI mode data bits, using the UTF-8-like
 /// variable-length prefix scheme the spec defines: 1 byte for 0..=127, 2 bytes for
 /// 128..=16383, 3 bytes for 16384..=999999.
-pub(crate) fn encode_eci(designator: u32) -> Result<BitVec<u8, Lsb0>, EncodeError> {
+fn encode_eci(designator: u32) -> Result<BitVec<u8, Lsb0>, EncodeError> {
     let mut bits = BitVec::new();
     match designator {
         0..=127 => {
@@ -165,13 +166,13 @@ pub(crate) fn encode_eci(designator: u32) -> Result<BitVec<u8, Lsb0>, EncodeErro
 
 /// Encodes FNC1-in-first-position. It carries no data of its own beyond its mode indicator
 /// (written by the caller), so there are no data bits to append.
-pub(crate) fn encode_fnc1_first_position() -> BitVec<u8, Lsb0> {
+fn encode_fnc1_first_position() -> BitVec<u8, Lsb0> {
     BitVec::new()
 }
 
 /// Encodes FNC1-in-second-position's Application Indicator as QR data bits. Resolving an
 /// AI (a digit or letter, per AIM spec) to its 8-bit value is the caller's responsibility.
-pub(crate) fn encode_fnc1_second_position(application_indicator: u8) -> BitVec<u8, Lsb0> {
+fn encode_fnc1_second_position(application_indicator: u8) -> BitVec<u8, Lsb0> {
     let mut bits = BitVec::new();
     write_bits(&mut bits, application_indicator as u32, 8);
     bits
@@ -179,7 +180,7 @@ pub(crate) fn encode_fnc1_second_position(application_indicator: u8) -> BitVec<u
 
 /// Encodes Structured Append's header fields as QR data bits: a 4-bit sequence number, a
 /// 4-bit total-symbol count (both 0..=15), and an 8-bit parity byte.
-pub(crate) fn encode_structured_append(sequence_number: u8, total_symbols: u8, parity: u8, ) -> Result<BitVec<u8, Lsb0>, EncodeError> {
+fn encode_structured_append(sequence_number: u8, total_symbols: u8, parity: u8, ) -> Result<BitVec<u8, Lsb0>, EncodeError> {
     if sequence_number > 15 || total_symbols > 15 {
         return Err(EncodeError::StructuredAppendOutOfRange);
     }
@@ -189,6 +190,10 @@ pub(crate) fn encode_structured_append(sequence_number: u8, total_symbols: u8, p
     write_bits(&mut bits, total_symbols as u32, 4);
     write_bits(&mut bits, parity as u32, 8);
     Ok(bits)
+}
+
+pub fn encode_data_by_encoding_plan(data:&str, plan: SegmentPlan) -> Result<BitVec<u8, Lsb0>, EncodeError> {
+    todo!()
 }
 
 #[cfg(test)]

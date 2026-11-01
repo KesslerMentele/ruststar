@@ -1,4 +1,5 @@
 use bitvec::prelude::*;
+use crate::services::qr_code::segmenter::{best_single_mode, segment, SegmentError, SegmentPlan};
 
 pub mod penalty_score;
 pub mod gf_math;
@@ -25,6 +26,16 @@ impl TryFrom<u8> for QRVersion {
     }
 }
 
+
+/// How the caller wants the version chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionChoice {
+    /// Use exactly this version, failing if the data doesn't fit.
+    Fixed(QRVersion),
+    /// Use the smallest version that fits the optimally segmented data.
+    Auto,
+}
+
 pub enum EncodingMode {
     Numeric,
     Alphanumeric,
@@ -45,12 +56,38 @@ pub enum ErrorCorrectionLevel {
     H
 }
 
+pub enum QRCreationError {
+    InvalidQRVersion(QRVersionError),
+    NotSegmentable(SegmentError),
+}
+
+impl From<SegmentError> for QRCreationError {
+    fn from(value: SegmentError) -> Self { QRCreationError::NotSegmentable(value) }
+}
+impl From<QRVersionError> for QRCreationError {
+    fn from(value: QRVersionError) -> Self { QRCreationError::InvalidQRVersion(value) }
+}
 
 fn create_qr_code_bits(
-    version:QRVersion,
+    data: &str,
     error_correction_level:ErrorCorrectionLevel,
-    encoding_mode: Option<EncodingMode>
-) -> Result<BitVec<u8, Lsb0>, QRVersionError> {
+    encoding_mode: Option<EncodingMode>,
+    version:Option<QRVersion>,
+) -> Result<BitVec<u8, Lsb0>, QRCreationError> {
+    let version_choice = match version {
+        Some(version) => VersionChoice::Fixed(version),
+        None => VersionChoice::Auto
+    };
+    match encoding_mode {
+        Some(EncodingMode::Segmented) => {
+            let segment_plan = segment(data,version_choice, error_correction_level)?;
+        },
+        Some(EncodingMode::AutoDetect) => {
+            let mode = best_single_mode(data);
+        }
+    }
+
+
 
 
     todo!()

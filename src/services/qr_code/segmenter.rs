@@ -35,18 +35,10 @@
 
 use std::ops::Range;
 
-use super::capacity;
+use super::{capacity, VersionChoice};
 use super::encoder::{alphanumeric_value, shift_jis_kanji};
 use super::{ErrorCorrectionLevel, QRVersion};
 
-/// How the caller wants the version chosen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VersionChoice {
-    /// Use exactly this version, failing if the data doesn't fit.
-    Fixed(QRVersion),
-    /// Use the smallest version that fits the optimally segmented data.
-    Auto,
-}
 
 /// The data modes that take part in segmentation. ECI, FNC1 and Structured Append are prefixes,
 /// not alternatives for encoding a run of characters, so they're added by the caller.
@@ -85,6 +77,19 @@ impl SegmentMode {
             // SegmentMode::ECI =>
         }
     }
+}
+
+/// The single mode that best encodes all of `data` without segmentation: the narrowest mode
+/// whose character set covers every char, checked in Numeric, Alphanumeric, Kanji, Byte
+/// preference order. Byte mode encodes every char, so this always finds a mode.
+pub(crate) fn best_single_mode(data: &str) -> SegmentMode {
+    const PREFERENCE: [SegmentMode; 4] =
+        [SegmentMode::Numeric, SegmentMode::Alphanumeric, SegmentMode::Kanji, SegmentMode::Byte];
+
+    PREFERENCE
+        .into_iter()
+        .find(|&mode| data.chars().all(|c| mode.char_cost(c).is_some()))
+        .expect("Byte mode encodes every char, so some mode always qualifies")
 }
 
 /// Character count indicator widths change at versions 10 and 27; within a group, every version
@@ -154,7 +159,7 @@ pub struct SegmentPlan {
     pub(crate) version: QRVersion,
     pub(crate) segments: Vec<Segment>,
     /// Total length of every segment's header and data, in bits.
-    pub(crate) data_bits: usize,
+    pub(crate) data_bits_length: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,11 +185,7 @@ fn round_up_to_bit(cost: usize) -> usize {
 }
 
 /// Splits `data` into segments, choosing the version per `choice`.
-pub fn segment(
-    data: &str,
-    choice: VersionChoice,
-    error_correction_level: ErrorCorrectionLevel,
-) -> Result<SegmentPlan, SegmentError> {
+pub fn segment(data: &str, choice: VersionChoice, error_correction_level: ErrorCorrectionLevel, ) -> Result<SegmentPlan, SegmentError> {
     // A segment's character count can't overflow its count indicator here: in every group, the
     // longest count the indicator holds needs more bits than the group's largest version has, so
     // any plan that passes the capacity check is representable.
@@ -195,7 +196,7 @@ pub fn segment(
             if needed_bits > capacity_bits {
                 return Err(SegmentError::ExceedsVersionCapacity { needed_bits, capacity_bits });
             }
-            Ok(SegmentPlan { version, segments, data_bits: needed_bits })
+            Ok(SegmentPlan { version, segments, data_bits_length: needed_bits })
         }
         VersionChoice::Auto => {
             let mut needed_bits = 0;
@@ -206,7 +207,7 @@ pub fn segment(
                     .versions()
                     .find(|&version| bits <= data_capacity_bits(version, error_correction_level))
                 {
-                    return Ok(SegmentPlan { version, segments, data_bits: bits });
+                    return Ok(SegmentPlan { version, segments, data_bits_length: bits });
                 }
             }
             Err(SegmentError::TooLong { needed_bits })
@@ -279,11 +280,7 @@ fn cheapest_rounded(row: &[Option<Step>; 4]) -> (SegmentMode, usize) {
 }
 
 /// Walks back from `end_mode` in the final row to recover the segments, front to back.
-fn backtrack(
-    table: &[[Option<Step>; 4]],
-    boundaries: &[usize],
-    end_mode: SegmentMode,
-) -> Vec<Segment> {
+fn backtrack(table: &[[Option<Step>; 4]], boundaries: &[usize], end_mode: SegmentMode, ) -> Vec<Segment> {
     let mut segments: Vec<Segment> = Vec::new();
     let mut mode = end_mode;
 
@@ -428,7 +425,7 @@ mod tests {
         // 41 bits fits version 1-M (128 bits).
         let plan = segment("01234567", VersionChoice::Auto, ErrorCorrectionLevel::M).unwrap();
         assert_eq!(plan.version, QRVersion { version: 1 });
-        assert_eq!(plan.data_bits, 41);
+        assert_eq!(plan.data_bits_length, 41);
 
         // 20 bytes is 172 bits: too many for 1-L (152), enough for 2-L (272).
         let plan = segment(&"a".repeat(20), VersionChoice::Auto, ErrorCorrectionLevel::L).unwrap();
@@ -441,7 +438,7 @@ mod tests {
         // but within 11-L (2592).
         let plan = segment(&"a".repeat(300), VersionChoice::Auto, ErrorCorrectionLevel::L).unwrap();
         assert_eq!(plan.version, QRVersion { version: 11 });
-        assert_eq!(plan.data_bits, 2420);
+        assert_eq!(plan.data_bits_length, 2420);
     }
 
     #[test]
