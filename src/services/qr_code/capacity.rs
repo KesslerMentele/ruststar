@@ -26,7 +26,7 @@ const ERROR_CORRECTION_BLOCKS: [[u8; 40]; 4] = [
 /// Modules left for data and error correction once the finder, separator, timing and alignment
 /// patterns, the format information and (from version 7) the version information are removed.
 /// Not always a multiple of 8: the 0, 3, 4 or 7 leftover remainder bits hold no codeword.
-fn raw_data_modules(version: QRVersion) -> usize {
+pub(crate) fn raw_data_modules(version: QRVersion) -> usize {
     let v = version.version as usize;
     let mut modules = (16 * v + 128) * v + 64;
     if v >= 2 {

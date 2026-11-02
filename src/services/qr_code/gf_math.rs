@@ -282,6 +282,14 @@ fn reed_solomon_remainder(data: GF256Polynomial, ec_len: EcLength) -> GF256Polyn
     poly.truncate(t);
     GF256Polynomial(poly)
 }
+/// The `ec_len` error correction codewords for one block of `data` codewords. Both are in
+/// transmission order, so `data[0]` is the message polynomial's highest-degree coefficient; this
+/// is the same convention `correct_block` reads a block in.
+pub(crate) fn error_correction_codewords(data: &[u8], ec_len: EcLength) -> Vec<u8> {
+    let message = GF256Polynomial(data.iter().rev().map(|&b| GF256::from(b)).collect());
+    let remainder = reed_solomon_remainder(message, ec_len);
+    remainder.0.iter().rev().map(|coefficient| coefficient.0).collect()
+}
 /// Evaluates `received` at each power of alpha used by `ec_len`'s generator polynomial,
 /// producing the syndrome polynomial. All syndromes are zero iff the block decodes as
 /// error-free.
@@ -591,6 +599,20 @@ mod tests {
         let remainder = reed_solomon_remainder(data.clone(), ec_len);
         let codeword = data.shift(ec_len.value()) + remainder;
         codeword.0.iter().rev().map(|c| c.0).collect()
+    }
+
+    #[test]
+    fn error_correction_codewords_build_a_block_correct_block_can_repair() {
+        let ec_len = EcLength::try_from(10).unwrap();
+        let data = [0x10, 0x20, 0x0C, 0x56, 0x61, 0x80, 0xEC, 0x11];
+        let mut block = data.to_vec();
+        block.extend(error_correction_codewords(&data, ec_len));
+        assert_eq!(correct_block(&block, ec_len), block);
+
+        let mut corrupted = block.clone();
+        corrupted[1] ^= 0x42;
+        corrupted[12] ^= 0x07;
+        assert_eq!(correct_block(&corrupted, ec_len), block);
     }
 
     #[test]

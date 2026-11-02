@@ -26,3 +26,7 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 [[bench]]
 name = "penalty_score_bench"
 harness = false
+
+[[bench]]
+name = "segmenter_bench"
+harness = false

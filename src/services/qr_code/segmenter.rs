@@ -95,7 +95,7 @@ pub(crate) fn best_single_mode(data: &str) -> SegmentMode {
 /// Character count indicator widths change at versions 10 and 27; within a group, every version
 /// shares the same header costs and so the same optimal segmentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum VersionGroup {
+pub(crate) enum VersionGroup {
     Small,
     Medium,
     Large,
@@ -104,7 +104,7 @@ enum VersionGroup {
 impl VersionGroup {
     const ALL: [VersionGroup; 3] = [VersionGroup::Small, VersionGroup::Medium, VersionGroup::Large];
 
-    fn of(version: QRVersion) -> Self {
+    pub(crate) fn of(version: QRVersion) -> Self {
         match version.version {
             1..=9 => VersionGroup::Small,
             10..=26 => VersionGroup::Medium,
@@ -122,7 +122,7 @@ impl VersionGroup {
     }
 
     /// Width of the character count indicator for `mode` in this group, in bits.
-    fn char_count_bits(self, mode: SegmentMode) -> usize {
+    pub(crate) fn char_count_bits(self, mode: SegmentMode) -> usize {
         match (mode, self) {
             (SegmentMode::Numeric, VersionGroup::Small) => 10,
             (SegmentMode::Numeric, VersionGroup::Medium) => 12,
@@ -186,28 +186,46 @@ fn round_up_to_bit(cost: usize) -> usize {
 
 /// Splits `data` into segments, choosing the version per `choice`.
 pub fn segment(data: &str, choice: VersionChoice, error_correction_level: ErrorCorrectionLevel, ) -> Result<SegmentPlan, SegmentError> {
+    // `choose_version` stops at the group it picks, so the last segmentation computed is that
+    // group's.
+    let mut segments = Vec::new();
+    let (version, data_bits_length) = choose_version(choice, error_correction_level, |group| {
+        let (group_segments, bits) = optimal_segments(data, group);
+        segments = group_segments;
+        bits
+    })?;
+    Ok(SegmentPlan { version, segments, data_bits_length })
+}
+
+/// Chooses the version per `choice` for data that needs `bits_for(group)` bits in each version
+/// group, returning it with the bits needed there. Auto evaluates groups smallest first and stops
+/// at the first one with a version that fits.
+pub(crate) fn choose_version(
+    choice: VersionChoice,
+    error_correction_level: ErrorCorrectionLevel,
+    mut bits_for: impl FnMut(VersionGroup) -> usize,
+) -> Result<(QRVersion, usize), SegmentError> {
     // A segment's character count can't overflow its count indicator here: in every group, the
     // longest count the indicator holds needs more bits than the group's largest version has, so
-    // any plan that passes the capacity check is representable.
+    // any data that passes the capacity check is representable.
     match choice {
         VersionChoice::Fixed(version) => {
-            let (segments, needed_bits) = optimal_segments(data, VersionGroup::of(version));
+            let needed_bits = bits_for(VersionGroup::of(version));
             let capacity_bits = data_capacity_bits(version, error_correction_level);
             if needed_bits > capacity_bits {
                 return Err(SegmentError::ExceedsVersionCapacity { needed_bits, capacity_bits });
             }
-            Ok(SegmentPlan { version, segments, data_bits_length: needed_bits })
+            Ok((version, needed_bits))
         }
         VersionChoice::Auto => {
             let mut needed_bits = 0;
             for group in VersionGroup::ALL {
-                let (segments, bits) = optimal_segments(data, group);
-                needed_bits = bits;
+                needed_bits = bits_for(group);
                 if let Some(version) = group
                     .versions()
-                    .find(|&version| bits <= data_capacity_bits(version, error_correction_level))
+                    .find(|&version| needed_bits <= data_capacity_bits(version, error_correction_level))
                 {
-                    return Ok(SegmentPlan { version, segments, data_bits_length: bits });
+                    return Ok((version, needed_bits));
                 }
             }
             Err(SegmentError::TooLong { needed_bits })

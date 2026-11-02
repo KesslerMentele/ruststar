@@ -3,11 +3,7 @@ use std::hint::black_box;
 use bitvec::prelude::*;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::prelude::*;
-use ruststar::services::qr_code::penalty_score::{
-    calculate_finder_pattern_score, calculate_horizontal_score, calculate_ratio_score,
-    calculate_squares_score, calculate_vertical_score, penalty_score, penalty_score_adaptive,
-    penalty_score_mt,
-};
+use ruststar::services::qr_code::penalty_score::{calculate_finder_pattern_score, calculate_horizontal_score, calculate_ratio_score, calculate_squares_score, calculate_vertical_score, penalty_score, penalty_score_mt, penalty_score_st};
 
 // QR module grid sizes (size = 21 + 4 * (version - 1)) for versions 1, 10, 20, 30, 40 —
 // spans the whole range from the smallest symbol up to the largest.
@@ -87,13 +83,13 @@ fn bench_full_suite(c: &mut Criterion) {
     for size in SIZES {
         let grid = random_grid(size);
         group.bench_with_input(BenchmarkId::new("single_threaded", size), &size, |b, &size| {
-            b.iter(|| black_box(penalty_score(black_box(&grid), size, size)));
+            b.iter(|| black_box(penalty_score_st(black_box(&grid), size, size)));
         });
         group.bench_with_input(BenchmarkId::new("multi_threaded", size), &size, |b, &size| {
             b.iter(|| black_box(penalty_score_mt(black_box(&grid), size, size)));
         });
         group.bench_with_input(BenchmarkId::new("adaptive", size), &size, |b, &size| {
-            b.iter(|| black_box(penalty_score_adaptive(black_box(&grid), size, size)));
+            b.iter(|| black_box(penalty_score(black_box(&grid), size, size)));
         });
     }
     group.finish();
