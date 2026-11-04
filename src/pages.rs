@@ -1,6 +1,7 @@
 pub(crate) mod toys;
 pub(crate) mod portfolio;
 pub(crate) mod todo;
+mod qr_explanations;
 
 use maud::{html, Markup, DOCTYPE};
 
@@ -18,7 +19,7 @@ pub fn layout(title: &str, head:Markup, content: Markup) -> Markup {
             }
             body id="root" {
                 (header())
-                main {
+                main class="content-container" {
                     (content)
                 }
             }

@@ -98,7 +98,10 @@ fn portfolio_page(backend_name: &str, clock: &str, todos: &[Todo]) -> Markup {
                 (portfolio_section(
                     "More",
                     Option::from("Some more SSE-driven creations"),
-                    html!{p { a href="/toys/pages" { "Tic-tac-toe" } }}
+                    html!{p {
+                        a href="/toys/pages" { "Toys" }
+                        a href="/toys/pages" { "Toys" }
+                    }}
                 ))
                 
             }
