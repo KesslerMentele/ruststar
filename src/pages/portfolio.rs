@@ -9,9 +9,10 @@ use axum::routing::{get, post};
 use datastar::patch_elements::PatchElements;
 use futures::stream;
 use maud::{html, Markup};
+use tracing::span::Attributes;
 use crate::{sse_response, AppState};
 use crate::pages::{layout};
-use crate::pages::todo::todo_item;
+use crate::pages::todo::todo_list_section;
 use crate::services::{SqliteError, Todo};
 
 fn current_time_string() -> String {
@@ -25,22 +26,7 @@ fn current_time_string() -> String {
     format!("{h:02}:{m:02}:{s:02} UTC")
 }
 fn clock_fragment(time: &str) -> Markup {
-    html! { div id="clock-value" { (time) } }
-}
-
-fn todo_list_section(todos: &[Todo]) -> Markup {
-    html! {
-        div id="todo-list-section" {
-            div id="todo-list" {
-                @for todo in todos {
-                    (todo_item(todo))
-                }
-            }
-            @if todos.is_empty() {
-                p { "No todos yet. Add one above!"}
-            }
-        }
-    }
+    html! { div data-init="@get('/live/clock')" id="clock-value" { (time) } }
 }
 
 fn backend_badge(name: &str) -> Markup {
@@ -82,41 +68,55 @@ fn portfolio_page(backend_name: &str, clock: &str, todos: &[Todo]) -> Markup {
     layout(
         "Home",
         html! {
+            link rel="stylesheet" href="/assets/portfolio.css";
+            link rel="stylesheet" href="/assets/todo.css";
+        },
+        html! {
             div id="portfolio" {
-                header id="portfolio-header" {
-                    h1 { "Kessler Mentele" }
-                    p id="portfolio-tagline" { "Backend-leaning developer." }
-                }
 
-                section class="demo-card" id="clock-widget" data-init="@get('/live/clock')" {
-                    h2 { "Reactive without a framework" }
-                    p class="demo-sub" { "No client-side JS beyond Datastar. The server pushes this over SSE, once a second." }
-                    (clock_fragment(clock))
-                }
-
-                section class="demo-card" id="backend-widget" {
-                    h2 { "Real Time Dependency injection" }
-                    p class="demo-sub" { "The todo app underneath is written against a " code { "TodoService" } " trait. The instance backing it is swappable at runtime — not just at compile time." }
-                    p { "Active backend: " (backend_badge(backend_name)) }
-                    button data-on:click="@post('/backend/toggle')" { "Swap backend" }
-                     form data-signals-title="''" data-on:submit__prevent="@post('/todos')" {
-                        input type="text" placeholder="What needs to be done?" data-bind="title" required;
-                        " "
-                        button type="submit" { "Add" }
+                (portfolio_section(
+                    "Reactive without a framework",
+                    Option::from("No client-side JS beyond Datastar. The server pushes this over SSE, once a second."),
+                    clock_fragment(clock)
+                ))
+                (portfolio_section(
+                    "Real Time Dependency injection",
+                    Option::from("The todo app underneath is written against a hot-swappable backend service."),
+                    html!{
+                        div class="article-container" {
+                            button data-on:click="@post('/backend/toggle')" { "Swap backend" }
+                            p { "Active backend: " (backend_badge(backend_name)) }
+                        }
+                        form class="demo-form" data-signals-title="''" data-on:submit__prevent="@post('/todos')" {
+                            input type="text" placeholder="What needs to be done?" data-bind="title" required;
+                            button type="submit" { "Add" }
+                        }
+                        (todo_list_section(todos))
                     }
-                    (todo_list_section(todos))
-                }
+                ))
 
-                section class="demo-card" {
-                    h2 { "More" }
-                    p class="demo-sub" { "Small server-rendered, SSE-driven pieces." }
-                    p { a href="/toys/pages" { "Tic-tac-toe →" } }
-                }
+                (portfolio_section(
+                    "More",
+                    Option::from("Some more SSE-driven creations"),
+                    html!{p { a href="/toys/pages" { "Tic-tac-toe" } }}
+                ))
+                
             }
         },
     )
 }
 
+
+fn portfolio_section(header: &str, sub: Option<&str>, content: Markup) -> Markup {
+    html! {
+         section class="article-section papered" id="clock-widget" {
+                    h2 class="article-header" { (header) }
+                    @if sub.is_some() {p class="article-sub-header"  { (sub.unwrap()) }}
+                    (content)
+                }
+    }
+
+}
 
 #[axum::debug_handler]
 async fn portfolio_get(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, SqliteError> {

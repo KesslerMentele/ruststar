@@ -8,7 +8,7 @@ use maud::{html, Markup};
 use serde::Deserialize;
 use crate::game_ttt::{get_game_grid, process_player_action, GameStatus};
 use crate::{sse_response, AppState};
-use crate::pages::{home_button, layout};
+use crate::pages::{layout};
 use crate::services::SqliteError;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -90,10 +90,12 @@ fn games_page() -> Markup {
 
     layout("Toys",
            html! {
+               link rel="stylesheet" href="/assets/toys.css";
+           },
+           html! {
                div id="toys" {
                    h1 id="toy-header" { "Toys" }
                    (render_game_list())
-                   (home_button())
                }
            }
     )

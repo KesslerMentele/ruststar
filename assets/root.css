@@ -1,0 +1,216 @@
+@font-face {
+    font-family: "Paper Mono";
+    font-style: normal;
+    font-weight: 100 800;
+    font-display: swap;
+    src: url("/assets/fonts/paper-mono-variable.woff2") format("woff2");
+}
+
+@font-face {
+    font-family: "Maple Mono";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/assets/fonts/maple-mono-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+    font-family: "Maple Mono";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("/assets/fonts/maple-mono-latin-500-normal.woff2") format("woff2");
+}
+
+@font-face {
+    font-family: "Maple Mono";
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/assets/fonts/maple-mono-latin-700-normal.woff2") format("woff2");
+}
+
+:root {
+    --font-default: "Paper Mono";
+    --font-curly: "Maple Mono";
+    --paper-texture: url(data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9Im5vIj8+CjwhLS0gQ3JlYXRlZCB3aXRoIElua3NjYXBlIChodHRwOi8vd3d3Lmlua3NjYXBlLm9yZy8pIC0tPgoKPHN2ZwogICB3aWR0aD0iNTA4bW0iCiAgIGhlaWdodD0iMjg1Ljc1bW0iCiAgIHZpZXdCb3g9IjAgMCA1MDggMjg1Ljc1IgogICB2ZXJzaW9uPSIxLjEiCiAgIGlkPSJzdmcxIgogICB4bWw6c3BhY2U9InByZXNlcnZlIgogICB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgIHhtbG5zOnN2Zz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxkZWZzCiAgICAgaWQ9ImRlZnMxIj48ZmlsdGVyCiAgICAgICBzdHlsZT0iY29sb3ItaW50ZXJwb2xhdGlvbi1maWx0ZXJzOnNSR0IiCiAgICAgICBpZD0iZmlsdGVyMTAxIgogICAgICAgeD0iMCIKICAgICAgIHk9IjAiCiAgICAgICB3aWR0aD0iMSIKICAgICAgIGhlaWdodD0iMSI+PGZlVHVyYnVsZW5jZQogICAgICAgICBpZD0iZmVUdXJidWxlbmNlMTAxIgogICAgICAgICBiYXNlRnJlcXVlbmN5PSIwLjAyMDAwMDAwMDAwMDAwMDAxMSIKICAgICAgICAgbnVtT2N0YXZlcz0iOSIKICAgICAgICAgc2VlZD0iMTAiCiAgICAgICAgIHR5cGU9ImZyYWN0YWxOb2lzZSIgLz48ZmVEaWZmdXNlTGlnaHRpbmcKICAgICAgICAgaWQ9ImZlRGlmZnVzZUxpZ2h0aW5nMTAxIgogICAgICAgICBzdXJmYWNlU2NhbGU9IjIuMDQ5OTk5OTUiCiAgICAgICAgIGRpZmZ1c2VDb25zdGFudD0iMSI+PGZlRGlzdGFudExpZ2h0CiAgICAgICAgICAgaWQ9ImZlRGlzdGFudExpZ2h0MTAzIgogICAgICAgICAgIGF6aW11dGg9Ijc1IgogICAgICAgICAgIGVsZXZhdGlvbj0iNTAiIC8+PC9mZURpZmZ1c2VMaWdodGluZz48L2ZpbHRlcj48L2RlZnM+PGcKICAgICBpZD0ibGF5ZXIxIgogICAgIHRyYW5zZm9ybT0idHJhbnNsYXRlKC0xNTU0KSI+PHJlY3QKICAgICAgIHN0eWxlPSJvcGFjaXR5OjE7ZmlsbDojN2I0OTM4O2ZpbGwtb3BhY2l0eToxO3N0cm9rZS13aWR0aDoyLjY0NTgzO2ZpbHRlcjp1cmwoI2ZpbHRlcjEwMSkiCiAgICAgICBpZD0icmVjdDEwMSIKICAgICAgIHdpZHRoPSI1MDgiCiAgICAgICBoZWlnaHQ9IjI4NS43NSIKICAgICAgIHg9IjE1NTQiCiAgICAgICB5PSItNC45NzM3OTkyZS0xNCIgLz48L2c+PC9zdmc+Cg==);
+    --color-brand-orange: #A2683F;
+    --color-brand-green: #496E4B;
+    --color-brand-white: #e7e5ca;
+
+    --color-background: var(--color-brand-green);
+    --color-dark-background: color-mix(in oklab, var(--color-brand-green) 40%, color-mix(in oklab, var(--color-brand-orange) 75%, black));
+
+    --color-surface: var(--color-brand-white);
+    --color-surface-hover: color-mix(in oklab, var(--color-surface) 50%, white);
+    --color-accent: var(--color-brand-orange);
+
+    /* Ink for text on paper or surface backgrounds; text elsewhere uses --color-surface */
+    --color-foreground: var(--color-brand-orange);
+    --color-muted-foreground: #55554f;
+    --color-border: var(--color-dark-background);
+
+    /* Links on the green page background; .papered swaps these for dark ink */
+    --color-link: var(--color-surface);
+    --color-link-hover: white;
+}
+
+@layer base {
+    *, ::before, ::after {
+        border-color: var(--color-border);
+    }
+}
+
+/* --- base --- */
+
+/* Colours the overscroll area (past the top/bottom of the page) to match the app */
+html {
+    background-color: var(--color-surface);
+    overscroll-behavior-y: none;
+}
+
+/* #root is the <body> element */
+#root {
+    background-color: var(--color-background);
+    font-family: var(--font-default), ui-monospace;
+    color: var(--color-surface);
+    margin: 0;
+    text-align: center;
+    min-height: 100svh;
+    display: flex;
+    flex-direction: column;
+    isolation: isolate;
+}
+
+#root > main {
+    flex: 1;
+}
+
+#root::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-color: var(--color-dark-background);
+    mask: url("/assets/topo.svg") center / cover no-repeat;
+}
+
+a {
+    color: inherit;
+    text-decoration: none;
+    padding: 0.4rem 0.8rem;
+    font-size: 1rem;
+    cursor: pointer;
+    border-color: transparent;
+    background-color: transparent;
+    transition: all 120ms ease, transform 60ms ease;
+}
+
+
+
+input[type=text] {
+    min-width: 25%;
+    padding: 0.4rem;
+    font-size: 1rem;
+}
+
+button {
+    padding: 0.4rem 0.8rem;
+    font-size: 1rem;
+    cursor: pointer;
+    color: inherit;
+    border-color: transparent;
+    box-shadow: 0 0 0 0.05rem currentColor;
+    border-radius: 0.2rem;
+    background-color: transparent;
+    transition: all 120ms ease, transform 60ms ease;
+}
+
+button:hover {
+    box-shadow: 0 0 0 0.1rem currentColor;
+}
+
+button:active {
+    transform: scale(0.97);
+}
+
+code {
+    background: #f0f0ec;
+    color: var(--color-foreground);
+    border: 1px solid var(--color-foreground);
+    padding: 0.1rem 0.35rem;
+    font-size: 0.9em;
+}
+
+.papered {
+    --c: color-mix(in srgb, var(--color-surface), transparent 20%);
+    --color-link: color-mix(in oklab, var(--color-brand-orange) 75%, black);
+    --color-link-hover: color-mix(in oklab, var(--color-brand-orange) 75%, black);
+
+    color: var(--color-foreground);
+    background-color: var(--color-surface);
+    background-image:
+            linear-gradient(var(--c), var(--c)),
+            var(--paper-texture);
+    background-blend-mode: normal, multiply;
+}
+
+/* Buttons are transparent, so this lightens the paper showing through them */
+.papered button:hover {
+    background-color: rgb(255 255 255 / 10%);
+}
+
+/* --- header --- */
+
+.header {
+    border-bottom: 2px solid var(--color-foreground);
+    display: grid;
+    /* Equal outer columns keep the middle one centred on the page */
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    width: 100%;
+    align-items: center;
+}
+
+.header > a {
+    grid-column: 1;
+    justify-self: start;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    padding: 0 0.75rem;
+}
+
+.header > a:hover {
+    background-color: color-mix(in srgb, var(--color-brand-orange) 25%, transparent);
+}
+
+.header > header {
+    grid-column: 2;
+}
+
+.header > .header-links {
+    grid-column: 3;
+    justify-self: end;
+}
+
+.header-links a:hover,
+.header-links a:active,
+.header-links a:focus-visible {
+    background-color: var(--color-surface-hover);
+    color: var(--color-surface);
+    transition-duration: 0.1s;
+}
+
+.header > header h1 {
+    font-family: var(--font-curly), ui-monospace;
+    margin: 0;
+}
+
+#tagline {
+    color: var(--color-muted-foreground);
+    margin: 0.25rem 0;
+}

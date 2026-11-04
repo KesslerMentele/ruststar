@@ -3,7 +3,6 @@ use axum::extract::{Path, State};
 use axum::{Json, Router};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use datastar::consts::ElementPatchMode;
 use datastar::execute_script::ExecuteScript;
 use datastar::patch_elements::PatchElements;
 use datastar::patch_signals::PatchSignals;
@@ -22,10 +21,7 @@ async fn index_create(State(state): State<Arc<AppState>>, Json(signals): Json<Cr
     let remaining = todos.iter().filter(|t| !t.completed).count();
 
     Ok(sse_response(vec![
-        PatchElements::new(todo_item(&new_todo))
-            .selector("#todo-list")
-            .mode(ElementPatchMode::Append)
-            .into(),
+        PatchElements::new(todo_list_section(&todos)).into(),
         PatchSignals::new(format!(r#"{{"remaining": {remaining}, "title": ""}}"#))
             .into(),
     ]))
@@ -51,7 +47,7 @@ async fn index_delete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, 
     let todos = service.list().await?;
     let remaining = todos.iter().filter(|t| !t.completed).count();
     Ok(sse_response(vec![
-        PatchElements::new_remove(format!("#todo-{id}")).into(),
+        PatchElements::new(todo_list_section(&todos)).into(),
         PatchSignals::new(format!(r#"{{"remaining": {remaining}}}"#)).into()
     ]))
 }
@@ -82,7 +78,21 @@ async fn detail_delete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>,
         ExecuteScript::new("window.location = '/'").into()
     ]))
 }
-pub fn todo_item(todo: &Todo) -> Markup {
+pub fn todo_list_section(todos: &[Todo]) -> Markup {
+    html! {
+        div id="todo-list-section" {
+            div id="todo-list" {
+                @for todo in todos {
+                    (todo_item(todo))
+                }
+            }
+            @if todos.is_empty() {
+                p { "No todos yet. Add one above!"}
+            }
+        }
+    }
+}
+fn todo_item(todo: &Todo) -> Markup {
     html! {
         div id={ "todo-" (todo.id)} class={"todo" @if todo.completed { " completed" } } {
             span class="title" {
@@ -117,7 +127,13 @@ fn todo_detail_content(todo: &Todo) -> Markup {
     }
 }
 fn todo_page(todo: &Todo) -> Markup {
-    layout(&todo.title, todo_detail_content(todo))
+    layout(
+        &todo.title,
+        html! {
+            link rel="stylesheet" href="/assets/todo.css";
+        },
+        todo_detail_content(todo),
+    )
 }
 
 pub fn router() ->  Router<Arc<AppState>> {

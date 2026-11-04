@@ -1,0 +1,123 @@
+#toys, #ttt {
+    justify-content: center;
+    align-items: center;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+#toy-header, #game-header {
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0 0 0.25rem;
+}
+
+#toy-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+button.game-selector {
+    width: 220px;
+    background: var(--color-surface);
+    color: var(--color-foreground);
+    border: 1px solid var(--color-accent);
+    padding: 0.6rem 1rem;
+    margin: 0;
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
+    transition: background-color 120ms ease, border-color 120ms ease, transform 60ms ease;
+}
+
+button.game-selector:hover {
+    border-color: var(--color-foreground);
+    background: var(--color-surface-hover);
+}
+
+button.game-selector:active {
+    background: var(--color-foreground);
+    color: var(--color-surface);
+}
+
+/* --- tic-tac-toe --- */
+
+#ttt-board {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    border-radius: 0.2rem;
+    width: 240px;
+    height: 240px;
+    gap: 2px;
+    background: var(--color-foreground);
+    border: 2px solid var(--color-foreground);
+}
+
+.ttt-cell {
+    height: 100%;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-surface);
+    color: var(--color-foreground);
+    border: none;
+    border-radius: 0.2rem;
+    margin: 0;
+    padding: 0;
+    font-size: 1.5rem;
+    line-height: 1;
+}
+
+button.ttt-cell {
+    transition: background-color 120ms ease, color 120ms ease, transform 60ms ease;
+}
+
+button.ttt-cell:hover {
+    background: var(--color-surface-hover);
+}
+
+button.ttt-cell:active {
+    transform: scale(0.94);
+    background: #e4e4de;
+}
+
+div.ttt-cell {
+    font-weight: 700;
+    animation: pop 140ms ease;
+}
+
+@keyframes pop {
+    from {
+        transform: scale(0.6);
+        opacity: 0;
+    }
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+#ttt-result {
+    font-size: 1.15rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    animation: rise 160ms ease;
+}
+
+@keyframes rise {
+    from {
+        transform: translateY(4px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}

@@ -1,0 +1,15 @@
+.todo {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+}
+
+.todo .title {
+    flex: 1;
+}
+
+.completed .title {
+    text-decoration: line-through;
+    color: #999;
+}

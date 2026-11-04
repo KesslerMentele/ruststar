@@ -13,6 +13,7 @@ use serde::Deserialize;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use futures::stream;
 use tower_http::services::ServeDir;
+use tower_http::trace::TraceLayer;
 use crate::pages::{portfolio, todo, toys};
 use crate::services::{TodoService, memory::InMemoryTodoService, sqlite::SqliteTodoService, UserService, sqlite::SqliteUserService};
 use tracing_subscriber::{EnvFilter, prelude::*};
@@ -40,7 +41,7 @@ async fn main() {
     // Tracing setup
     tracing_subscriber::registry()
         .with(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| "with_axum_htmx_askama=debug".into())
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| "ruststar=debug,tower_http=debug".into())
         )
         .with(
             tracing_subscriber::fmt::layer()
@@ -78,13 +79,12 @@ async fn main() {
     let toy_routes = toys::router();
     let portfolio_routes = portfolio::router();
 
-    let assets_path = std::env::current_dir().unwrap();
-
     let app = Router::new()
         .merge(portfolio_routes)
-        .nest_service("/assets", ServeDir::new(assets_path.to_str().unwrap()))
+        .nest_service("/assets", ServeDir::new("assets"))
         .nest("/todos", todo_routes)
         .nest("/toys", toy_routes)
+        .layer(TraceLayer::new_for_http())
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:7878").await.unwrap();

@@ -1,5 +1,5 @@
 use argon2::{
-    password_hash::{ PasswordHasher, PasswordVerifier, phc::{PasswordHash, SaltString}},
+    password_hash::{ PasswordHasher, PasswordVerifier, phc::PasswordHash},
     Argon2,
 };
 

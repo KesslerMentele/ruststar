@@ -1,0 +1,53 @@
+#portfolio {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    gap: 1.5rem;
+    margin: 1.5rem auto 0;
+}
+
+.article-section {
+
+    padding: 1rem 1.25rem;
+    display: flex;
+    align-items: center;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.article-header {
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 0.95rem;
+}
+
+.demo-form,
+.article-container {
+    display: flex;
+    width: 100%;
+    justify-content: center;
+    gap: 0.25rem;
+}
+
+.article-container {
+    align-items: center;
+}
+
+.article-sub-header {
+    color: var(--color-muted-foreground);
+    font-size: 0.9rem;
+    margin: 0;
+    max-width: 50%;
+}
+
+#clock-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.05em;
+}
+
+#backend-badge {
+    font-weight: 700;
+}
