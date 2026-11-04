@@ -3,6 +3,7 @@ use std::ops::{Add, Div, Mul, Not};
 /// Antilog table for GF(256): `EXP_TABLE[i] = alpha^i`, where `alpha = 2` is the field's
 /// generator element under the QR code's primitive polynomial (x^8 + x^4 + x^3 + x^2 + 1).
 /// The multiplicative group has order 255, so `EXP_TABLE[255] == EXP_TABLE[0] == 1`.
+#[allow(dead_code)]
 const EXP_TABLE: [u8; 256] = [
     1, 2, 4, 8, 16, 32, 64, 128, 29, 58, 116, 232, 205, 135, 19, 38, 76, 152, 45, 90, 180, 117,
     234, 201, 143, 3, 6, 12, 24, 48, 96, 192, 157, 39, 78, 156, 37, 74, 148, 53, 106, 212, 181,
@@ -21,6 +22,7 @@ const EXP_TABLE: [u8; 256] = [
 /// Discrete log table for GF(256), the inverse of `EXP_TABLE`: `LOG_TABLE[x] = i` such that
 /// `alpha^i == x`, for `x` in `1..256`. `LOG_TABLE[0]` has no meaningful value since zero has
 /// no discrete logarithm; it's never read for `x == 0` (callers check for that case first).
+#[allow(dead_code)]
 const LOG_TABLE: [u8; 256] =[
     0, 255, 1, 25, 2, 50, 26, 198, 3, 223, 51, 238, 27, 104, 199, 75, 4, 100, 224, 14, 52, 141,
     239, 129, 28, 193, 105, 248, 200, 8, 76, 113, 5, 138, 101, 47, 225, 36, 15, 33, 53, 147, 142,
@@ -39,9 +41,11 @@ const LOG_TABLE: [u8; 256] =[
 
 /// One of the valid error-correction codeword counts a QR generator polynomial can be built
 /// for. Constructible only via `TryFrom<u8>`, which rejects any length not in `ALL`.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EcLength(u8);
 
+#[allow(dead_code)]
 impl EcLength {
     /// Every valid EC codeword length, in the same order as `EC_POLYNOMIALS` below (so a
     /// length's index in `ALL` is also its index into `EC_POLYNOMIALS`).

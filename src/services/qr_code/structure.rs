@@ -78,6 +78,7 @@ pub(crate) struct QRMatrix {
     function: BitVec<u8, Lsb0>,
 }
 
+#[allow(dead_code)]
 impl QRMatrix {
     /// An all-light matrix for `version`, with no function patterns drawn.
     pub(crate) fn new(version: QRVersion) -> Self {

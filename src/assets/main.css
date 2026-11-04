@@ -1,0 +1,106 @@
+
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/noto-sans";
+@import "@fontsource-variable/space-grotesk";
+@import "@fontsource/maple-mono/400.css";
+@import "@fontsource/maple-mono/500.css";
+@import "@fontsource/maple-mono/700.css";
+
+@theme {
+    --font-mono: "Maple Mono", ui-monospace, monospace;
+
+    --color-brand-orange: #A2683F;
+    --color-brand-green: #496E4B;
+    --color-brand-white: #DFDCB9;
+
+    --color-background: var(--color-brand-green);
+    --color-dark-background: color-mix(in oklab, var(--color-brand-orange) 75%, black);
+    --color-surface: var(--color-brand-white);
+    --color-accent: var(--color-brand-orange);
+
+    --color-foreground: var(--color-brand-orange);
+    --color-card: var(--color-surface);
+    --color-card-foreground: var(--color-foreground);
+    --color-muted-foreground: color-mix(in oklab, var(--color-foreground) 70%, var(--color-surface));
+    --color-border: color-mix(in oklab, var(--color-foreground) 15%, transparent);
+}
+
+@layer base {
+    *, ::before, ::after {
+        border-color: var(--color-border);
+    }
+}
+
+.Header {
+    background-color: var(--color-surface);
+    border-bottom: 2px solid var(--color-foreground);
+}
+
+.Header-links a:hover,
+.Header-links a:active,
+.Header-links a:focus-visible {
+    background-color: var(--color-accent);
+    color: var(--color-surface);
+    transition-duration: 0.1s;
+}
+.Footer {
+    background-color: var(--color-surface);
+    border-top: 2px solid var(--color-foreground);
+}
+
+.Doodle {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.Doodle svg {
+    width: 100%;
+    height: 100%;
+}
+
+.Doodle :is(path, line, polyline, polygon, circle, ellipse, rect) {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    transition: stroke-dashoffset 0.6s ease-in-out;
+}
+
+.PhotoTile:hover .Doodle :is(path, line, polyline, polygon, circle, ellipse, rect),
+.PhotoTile:focus .Doodle :is(path, line, polyline, polygon, circle, ellipse, rect) {
+    stroke-dashoffset: 0;
+}
+
+
+/* Colours the overscroll area (past the top/bottom of the page) to match the app */
+html {
+    background-color: var(--color-surface);
+    overscroll-behavior-y: none;
+}
+
+#root {
+    max-width: 100%;
+    background-color: var(--color-background);
+    font-family: var(--font-mono), ui-monospace;
+    color: var(--color-foreground);
+    margin: 0 auto;
+    text-align: center;
+    min-height: 100svh;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    isolation: isolate;
+}
+
+#root::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-color: var(--color-dark-background);
+    opacity: 0.4;
+    mask: url("/assets/topo.svg") center / cover no-repeat;
+}
+

@@ -69,6 +69,7 @@ pub enum ErrorCorrectionLevel {
     H
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) enum QRCreationError {
     InvalidQRVersion(QRVersionError),
@@ -95,6 +96,7 @@ pub(crate) struct EncodedData {
     pub(crate) bits: BitVec<u8, Lsb0>,
 }
 
+#[allow(dead_code)]
 fn create_qr_code_bits(
     data: &str,
     error_correction_level:ErrorCorrectionLevel,
