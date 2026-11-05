@@ -17,7 +17,8 @@
 
 use std::ops::RangeInclusive;
 use bitvec::prelude::*;
-use crate::services::qr_code::{ErrorCorrectionLevel, QRVersion};
+use crate::services::qr_code::{ErrorCorrectionLevel, MaskSetting, QRVersion};
+use crate::services::qr_code::penalty_score::penalty_score;
 
 /// Alignment pattern center coordinates for each version, indexed by `version - 1`. Every pairing
 /// of two coordinates is a center, apart from the three that overlap a finder pattern.
@@ -74,7 +75,7 @@ pub(crate) enum MaskError {
 /// module". ISO/IEC 18004 Table 10.
 ///
 /// Returns `Err(MaskError::InvalidMaskVersion(pattern))` if `pattern` is greater than 7.
-fn mask_predicate(pattern: u8) -> Result<fn(usize, usize) -> bool, MaskError> {
+pub(crate) fn mask_predicate(pattern: u8) -> Result<fn(usize, usize) -> bool, MaskError> {
     match pattern {
         0 => Ok(|row: usize, col: usize| (row + col) % 2 == 0),
         1 => Ok(|row: usize, _col: usize| row % 2 == 0),
@@ -114,11 +115,34 @@ fn bch_remainder(data: u32, generator: u32) -> u32 {
 /// The 15-bit format information codeword for `data` (5 bits: a 2-bit error correction level
 /// indicator, then a 3-bit mask pattern), BCH(15,5) encoded and XORed with the format
 /// information mask. ISO/IEC 18004 Annex C.
-fn bch_format_information(data: u32) -> u32 {
+pub(crate) fn bch_format_information(data: u32) -> u32 {
     const GENERATOR: u32 = 0x537;
     const MASK: u32 = 0x5412;
     let shifted = data << 10;
     (shifted | bch_remainder(shifted, GENERATOR)) ^ MASK
+}
+
+/// Where bit `i` (0-14) of the format information sits in each of its two copies, for a symbol
+/// `size` modules wide, as `(row, col)`: first the copy in column 8, then the copy in row 8.
+pub(crate) fn format_information_positions(size: usize, i: usize) -> [(usize, usize); 2] {
+    let row = match i {
+        0..=5 => i,
+        6..=7 => i + 1,
+        _ => size - 15 + i,
+    };
+    let col = match i {
+        0..=7 => size - 1 - i,
+        8 => 7,
+        _ => 14 - i,
+    };
+    [(row, 8), (8, col)]
+}
+
+/// Every data module of a `version` symbol as `(row, col)`, in the order data bits are placed.
+/// The layout depends only on the version, so this needs no actual symbol to read from.
+pub(crate) fn data_module_positions(version: QRVersion) -> Vec<(usize, usize)> {
+    // The level only affects the contents of the format information, never which modules it owns.
+    QRMatrix::new(version, ErrorCorrectionLevel::M).data_module_order().collect()
 }
 
 /// The 18-bit version information codeword for `version` (6 bits), BCH(18,6) encoded.
@@ -332,18 +356,9 @@ impl QRMatrix {
         let bits = bch_format_information((level_bits << 3) | pattern as u32);
         for i in 0..15usize {
             let dark = (bits >> i) & 1 == 1;
-            let row = match i {
-                0..=5 => i,
-                6..=7 => i + 1,
-                _ => self.size - 15 + i,
-            };
-            self.set_function(row, 8, dark);
-            let col = match i {
-                0..=7 => self.size - 1 - i,
-                8 => 7,
-                _ => 14 - i,
-            };
-            self.set_function(8, col, dark);
+            for (row, col) in format_information_positions(self.size, i) {
+                self.set_function(row, col, dark);
+            }
         }
     }
 
@@ -408,15 +423,30 @@ impl QRMatrix {
     ///
     /// Returns `Err(MaskError::InvalidMaskVersion(pattern))`, without changing anything, if
     /// `pattern` is greater than 7.
-    pub(crate) fn set_mask(&mut self, pattern: u8) -> Result<(), MaskError> {
-        mask_predicate(pattern)?;
-        if let Some(previous) = self.mask {
-            self.apply_mask(previous)?;
+    pub(crate) fn set_mask(&mut self, pattern: MaskSetting) -> Result<(), MaskError> {
+        match pattern {
+            MaskSetting::Exact(val) => {
+                mask_predicate(val)?;
+                if let Some(previous) = self.mask {
+                    self.apply_mask(previous)?;
+                }
+                self.apply_mask(val)?;
+                self.mask = Some(val);
+                self.write_format_information(val);
+                Ok(())
+            }
+            MaskSetting::ChooseBest => {
+                // try all the masks and select the mask with the lowest penalty
+                let value = (0..8).map( |mask| {
+                    let proposal = &self.with_mask(mask).unwrap(); // This is only ever iterating on 0..8, guaranteed safe
+                    return (penalty_score(proposal, self.size, self.size).total, mask) 
+                }).min_by_key(|(k, _)| *k).map(|(_,mask)| mask).unwrap();
+      
+                self.set_mask(MaskSetting::Exact(value))
+                
+            }
         }
-        self.apply_mask(pattern)?;
-        self.mask = Some(pattern);
-        self.write_format_information(pattern);
-        Ok(())
+
     }
 
     /// Every module, row-major, as it would read if mask pattern `pattern` (0-7) were selected
@@ -426,7 +456,7 @@ impl QRMatrix {
     /// Returns `Err(MaskError::InvalidMaskVersion(pattern))` if `pattern` is greater than 7.
     pub(crate) fn with_mask(&self, pattern: u8) -> Result<BitVec<u8, Lsb0>, MaskError> {
         let mut candidate = self.clone();
-        candidate.set_mask(pattern)?;
+        candidate.set_mask(MaskSetting::Exact(pattern))?;
         Ok(candidate.modules)
     }
 }
@@ -730,7 +760,7 @@ mod tests {
         let row8_cols = [20, 19, 18, 17, 16, 15, 14, 13, 7, 5, 4, 3, 2, 1, 0];
 
         let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
-        matrix.set_mask(0).unwrap();
+        matrix.set_mask(MaskSetting::Exact(0)).unwrap();
         let expected = bch_format_information(0b00_000); // M, mask 0
 
         for i in 0..15 {
@@ -743,7 +773,7 @@ mod tests {
     #[test]
     fn set_mask_toggles_data_modules_matching_the_predicate() {
         let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
-        matrix.set_mask(0).unwrap(); // (row + col) % 2 == 0
+        matrix.set_mask(MaskSetting::Exact(0)).unwrap(); // (row + col) % 2 == 0
         // The first two data modules in placement order (see `data_order_starts_upwards...`).
         assert!(matrix.is_dark(20, 20), "20 + 20 is even");
         assert!(!matrix.is_dark(20, 19), "20 + 19 is odd");
@@ -761,7 +791,7 @@ mod tests {
             .filter(|&(row, col)| matrix.is_function(row, col) && is_outside_format_band(row, col))
             .map(|(row, col)| matrix.is_dark(row, col))
             .collect();
-        matrix.set_mask(5).unwrap();
+        matrix.set_mask(MaskSetting::Exact(5)).unwrap();
         let after: Vec<bool> = (0..matrix.size())
             .flat_map(|row| (0..matrix.size()).map(move |col| (row, col)))
             .filter(|&(row, col)| matrix.is_function(row, col) && is_outside_format_band(row, col))
@@ -776,12 +806,12 @@ mod tests {
 
         let mut switched = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
         switched.place_data(&bits);
-        switched.set_mask(3).unwrap();
-        switched.set_mask(5).unwrap();
+        switched.set_mask(MaskSetting::Exact(3)).unwrap();
+        switched.set_mask(MaskSetting::Exact(5)).unwrap();
 
         let mut direct = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
         direct.place_data(&bits);
-        direct.set_mask(5).unwrap();
+        direct.set_mask(MaskSetting::Exact(5)).unwrap();
 
         assert_eq!(switched.modules, direct.modules);
     }
@@ -790,7 +820,7 @@ mod tests {
     fn mask_returns_the_currently_set_pattern() {
         let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
         assert_eq!(matrix.mask(), None);
-        matrix.set_mask(2).unwrap();
+        matrix.set_mask(MaskSetting::Exact(2)).unwrap();
         assert_eq!(matrix.mask(), Some(2));
     }
 
@@ -814,7 +844,7 @@ mod tests {
         let via_with_mask = matrix.with_mask(4).unwrap();
 
         let mut via_set_mask = matrix.clone();
-        via_set_mask.set_mask(4).unwrap();
+        via_set_mask.set_mask(MaskSetting::Exact(4)).unwrap();
 
         assert_eq!(via_with_mask, via_set_mask.modules);
     }
@@ -822,7 +852,7 @@ mod tests {
     #[test]
     fn set_mask_rejects_patterns_above_7() {
         let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
-        assert_eq!(matrix.set_mask(8), Err(MaskError::InvalidMaskVersion(8)));
+        assert_eq!(matrix.set_mask(MaskSetting::Exact(8)), Err(MaskError::InvalidMaskVersion(8)));
         assert_eq!(matrix.mask(), None, "a rejected pattern must not become the matrix's mask");
     }
 

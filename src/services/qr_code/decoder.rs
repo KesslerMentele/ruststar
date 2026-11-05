@@ -1,14 +1,25 @@
-// The inverse of encoder.rs / segmenter.rs: reads a stream of data codewords already stripped
-// of ec, terminator and padding back into the original string
+// The inverse of `create_qr_code`. `decode_modules` takes a symbol's modules as plain row-major
+// bits, as a QR code reader would produce them, and works out everything else from those bits.
 use bitvec::prelude::*;
 use encoding_rs::SHIFT_JIS;
-use crate::services::qr_code::bits::bytes_to_bits;
+use crate::services::qr_code::bits::{bits_to_bytes, bytes_to_bits};
+use crate::services::qr_code::blocks::deinterleave;
+use crate::services::qr_code::capacity::{ec_block_info, total_codewords};
 use crate::services::qr_code::encoder::alphanumeric_char;
-use crate::services::qr_code::QRVersion;
+use crate::services::qr_code::gf_math::{correct_block, error_correction_codewords, EcLength};
+use crate::services::qr_code::{ErrorCorrectionLevel, QRVersion};
 use crate::services::qr_code::segmenter::{SegmentMode, VersionGroup};
+use crate::services::qr_code::structure::{bch_format_information, data_module_positions, format_information_positions, mask_predicate};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DecodeError {
+    /// This many modules isn't a square of any QR version's width.
+    InvalidModuleCount(usize),
+    /// Neither copy of the format information is close enough to a valid codeword to trust, so
+    /// the error correction level and mask are unknown.
+    UnreadableFormatInformation,
+    /// A block has more errors than its error correction codewords can repair.
+    UncorrectableBlock,
     /// Ran out of bits midsegment.
     UnexpectedEnd,
     /// A mode indicator this decoder doesn't handle (ECI, FNC1, Structured Append, or a value the spec doesn't define)
@@ -142,9 +153,187 @@ pub(crate) fn decode_segments(data_codewords: &[u8], version: QRVersion) -> Resu
     Ok(output)
 }
 
+/// The version whose symbol has exactly `module_count` modules, and that symbol's width.
+fn version_and_size(module_count: usize) -> Result<(QRVersion, usize), DecodeError> {
+    (1..=40u8)
+        .map(|version| (version, version as usize * 4 + 17))
+        .find(|&(_, size)| size * size == module_count)
+        .map(|(version, size)| (QRVersion::try_from(version).expect("1..=40 are all valid versions"), size))
+        .ok_or(DecodeError::InvalidModuleCount(module_count))
+}
+
+/// Reads the error correction level and mask pattern from the format information. Picks the valid
+/// codeword closest to either copy, and gives up if even that is more than 3 bits away: the
+/// furthest BCH(15,5), with its minimum distance of 7, can reliably correct.
+fn read_format_information(modules: &BitSlice<u8, Lsb0>, size: usize) -> Result<(ErrorCorrectionLevel, u8), DecodeError> {
+    let read_copy = |copy: usize| {
+        (0..15).fold(0u32, |word, i| {
+            let (row, col) = format_information_positions(size, i)[copy];
+            word | (modules[row * size + col] as u32) << i
+        })
+    };
+    let copies = [read_copy(0), read_copy(1)];
+    let (distance, data) = (0..32u32)
+        .flat_map(|data| copies.map(|copy| ((bch_format_information(data) ^ copy).count_ones(), data)))
+        .min()
+        .expect("0..32 is not empty");
+    if distance > 3 {
+        return Err(DecodeError::UnreadableFormatInformation);
+    }
+    let level = match data >> 3 {
+        0b01 => ErrorCorrectionLevel::L,
+        0b00 => ErrorCorrectionLevel::M,
+        0b11 => ErrorCorrectionLevel::Q,
+        _ => ErrorCorrectionLevel::H,
+    };
+    Ok((level, (data & 0b111) as u8))
+}
+
+/// Decodes a symbol's modules, row-major with `true` for dark, back into the original string.
+pub(crate) fn decode_modules(modules: &BitSlice<u8, Lsb0>) -> Result<String, DecodeError> {
+    let (version, size) = version_and_size(modules.len())?;
+    let (level, mask) = read_format_information(modules, size)?;
+
+    let is_masked = mask_predicate(mask).expect("format information's 3-bit mask is always valid");
+    let bits: BitVec<u8, Lsb0> = data_module_positions(version)
+        .into_iter()
+        .take(total_codewords(version) * 8)
+        .map(|(row, col)| modules[row * size + col] ^ is_masked(row, col))
+        .collect();
+    let codewords = bits_to_bytes(&bits);
+
+    let info = ec_block_info(version, level);
+    let ec_per_block = info.ec_codewords_per_block as usize;
+    let ec_len = EcLength::try_from(info.ec_codewords_per_block as u8)
+        .expect("ec_codewords_per_block is always a valid EcLength");
+
+    let mut data_codewords = Vec::with_capacity(info.total_data_codewords as usize);
+    for block in deinterleave(&codewords, info) {
+        let corrected = correct_block(&block, ec_len);
+        let (data, error_correction) = corrected.split_at(corrected.len() - ec_per_block);
+        // `correct_block` hands back its input when it gives up, so check the result is valid.
+        if error_correction_codewords(data, ec_len) != error_correction {
+            return Err(DecodeError::UncorrectableBlock);
+        }
+        data_codewords.extend_from_slice(data);
+    }
+    decode_segments(&data_codewords, version)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::qr_code::capacity::data_codewords;
+    use crate::services::qr_code::{create_qr_code, EncodingMode, MaskSetting};
+
+    /// What a reader would hand over for `data` at 1-M under `mask`: bits and nothing else.
+    fn scanned(data: &str, mask: u8) -> BitVec<u8, Lsb0> {
+        let matrix = create_qr_code(data, ErrorCorrectionLevel::M, None, None, Some(MaskSetting::Exact(mask))).unwrap();
+        matrix.modules().to_bitvec()
+    }
+
+    fn toggle(modules: &mut BitVec<u8, Lsb0>, size: usize, (row, col): (usize, usize)) {
+        let index = row * size + col;
+        let dark = modules[index];
+        modules.set(index, !dark);
+    }
+
+    #[test]
+    fn decode_modules_removes_every_mask_pattern() {
+        for mask in 0..8 {
+            assert_eq!(decode_modules(&scanned("HELLO WORLD", mask)), Ok("HELLO WORLD".to_string()), "mask {mask}");
+        }
+    }
+
+    #[test]
+    fn decode_modules_reads_every_level_from_the_format_information() {
+        use ErrorCorrectionLevel::*;
+        for level in [L, M, Q, H] {
+            let matrix = create_qr_code("HELLO", level, None, None, None).unwrap();
+            let (read_level, _) = read_format_information(matrix.modules(), matrix.size()).unwrap();
+            assert_eq!(read_level, level);
+            assert_eq!(decode_modules(matrix.modules()), Ok("HELLO".to_string()));
+        }
+    }
+
+    #[test]
+    fn decode_modules_reads_a_nearly_full_symbol_at_every_version_and_level() {
+        use ErrorCorrectionLevel::*;
+        for version in 1..=40u8 {
+            for level in [L, M, Q, H] {
+                let qr_version = QRVersion::try_from(version).unwrap();
+                // 3 bytes covers the longest Byte mode header.
+                let original: String = (0..data_codewords(qr_version, level) - 3)
+                    .map(|i| char::from(b'!' + (i % 90) as u8))
+                    .collect();
+                let mask = MaskSetting::Exact(version % 8);
+                let matrix = create_qr_code(&original, level, Some(EncodingMode::Byte), Some(qr_version), Some(mask)).unwrap();
+                assert_eq!(decode_modules(matrix.modules()).as_ref(), Ok(&original), "version {version} at {level:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn decode_modules_repairs_damaged_data_modules() {
+        // 1-M has 10 EC codewords, so it can repair errors in up to 5 of them.
+        let mut modules = scanned("01234567", 3);
+        let positions = data_module_positions(QRVersion::try_from(1).unwrap());
+        for codeword in 0..5 {
+            toggle(&mut modules, 21, positions[codeword * 8]);
+        }
+        assert_eq!(decode_modules(&modules), Ok("01234567".to_string()));
+    }
+
+    #[test]
+    fn decode_modules_reports_damage_beyond_what_error_correction_can_repair() {
+        let mut modules = scanned("01234567", 3);
+        for position in data_module_positions(QRVersion::try_from(1).unwrap()) {
+            toggle(&mut modules, 21, position);
+        }
+        assert_eq!(decode_modules(&modules), Err(DecodeError::UncorrectableBlock));
+    }
+
+    #[test]
+    fn decode_modules_tolerates_three_bad_format_bits_in_each_copy() {
+        let mut modules = scanned("01234567", 5);
+        for i in [0, 7, 14] {
+            for position in format_information_positions(21, i) {
+                toggle(&mut modules, 21, position);
+            }
+        }
+        assert_eq!(decode_modules(&modules), Ok("01234567".to_string()));
+    }
+
+    #[test]
+    fn decode_modules_falls_back_to_the_other_format_copy() {
+        let mut modules = scanned("01234567", 2);
+        for i in 0..15 {
+            toggle(&mut modules, 21, format_information_positions(21, i)[0]);
+        }
+        assert_eq!(decode_modules(&modules), Ok("01234567".to_string()));
+    }
+
+    #[test]
+    fn decode_modules_reports_unreadable_format_information() {
+        let unreadable = (0..1u32 << 15)
+            .find(|word| (0..32).all(|data| (bch_format_information(data) ^ word).count_ones() > 3))
+            .expect("BCH(15,5) leaves some words more than 3 bits from every codeword");
+        let mut modules = scanned("01234567", 3);
+        for i in 0..15 {
+            for (row, col) in format_information_positions(21, i) {
+                modules.set(row * 21 + col, (unreadable >> i) & 1 == 1);
+            }
+        }
+        assert_eq!(decode_modules(&modules), Err(DecodeError::UnreadableFormatInformation));
+    }
+
+    #[test]
+    fn decode_modules_rejects_counts_that_are_not_a_version_size() {
+        for count in [0, 440, 23 * 23, 181 * 181] {
+            let modules = bitvec![u8, Lsb0; 0; count];
+            assert_eq!(decode_modules(&modules), Err(DecodeError::InvalidModuleCount(count)));
+        }
+    }
 
     #[test]
     fn decodes_the_iso_18004_numeric_example() {

@@ -146,7 +146,7 @@ pub fn calculate_ratio_score(bits: &BitSlice<u8, Lsb0>) -> usize {
     ((percent.div_ceil(5) * 5).abs_diff(50) / 5).min(((percent / 5) * 5).abs_diff(50) / 5)
 }
 
-pub fn penalty_score_st(bits: &BitSlice<u8, Lsb0>, width: usize, height: usize) -> MaskEvaluation {
+fn penalty_score_st(bits: &BitSlice<u8, Lsb0>, width: usize, height: usize) -> MaskEvaluation {
     let horizontal_score = calculate_horizontal_score(bits, width, height);
     let vertical_score = calculate_vertical_score(bits, width, height);
     let squares_score = calculate_squares_score(bits, width, height);
@@ -168,7 +168,7 @@ pub fn penalty_score_st(bits: &BitSlice<u8, Lsb0>, width: usize, height: usize) 
 /// Same result as `penalty_score`, but runs each of the five sub-scores on its own thread.
 /// `thread::scope` lets every thread borrow `bits` directly — no `Arc`/`'static` needed — since
 /// the scope guarantees all five finish before this function returns.
-pub fn penalty_score_mt(bits: &BitSlice<u8, Lsb0>, width: usize, height: usize) -> MaskEvaluation {
+fn penalty_score_mt(bits: &BitSlice<u8, Lsb0>, width: usize, height: usize) -> MaskEvaluation {
     let (horizontal_score, vertical_score, squares_score, finder_pattern_score, ratio_score) =
         std::thread::scope(|scope| {
             let horizontal = scope.spawn(|| calculate_horizontal_score(bits, width, height));

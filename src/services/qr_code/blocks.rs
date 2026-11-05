@@ -68,3 +68,52 @@ pub(crate) fn interleave(data: &BitSlice<u8, Lsb0>, version: QRVersion, error_co
 
     result
 }
+
+/// The inverse of `interleave`, for a symbol's codewords: one `data ++ error_correction` sequence
+/// per block (group 1's, then group 2's). Ignores any codewords past the last block's.
+pub(crate) fn deinterleave(codewords: &[u8], info: EcBlockInfo) -> Vec<Vec<u8>> {
+    let data_lengths: Vec<usize> = std::iter::repeat_n(info.group_1_data_codewords as usize, info.group_1_blocks as usize)
+        .chain(std::iter::repeat_n(info.group_2_data_codewords as usize, info.group_2_blocks as usize))
+        .collect();
+    let mut blocks: Vec<Vec<u8>> = data_lengths.iter().map(|&length| Vec::with_capacity(length)).collect();
+    let mut remaining = codewords.iter().copied();
+    let mut next = || remaining.next().expect("a symbol holds every codeword of its blocks");
+
+    let max_data_len = data_lengths.iter().copied().max().unwrap_or(0);
+    for i in 0..max_data_len {
+        for (block, &length) in blocks.iter_mut().zip(&data_lengths) {
+            if i < length {
+                block.push(next());
+            }
+        }
+    }
+    for _ in 0..info.ec_codewords_per_block {
+        for block in &mut blocks {
+            block.push(next());
+        }
+    }
+    blocks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::qr_code::bits::bytes_to_bits;
+    use crate::services::qr_code::capacity::data_codewords;
+
+    #[test]
+    fn deinterleave_undoes_interleave_across_unequal_blocks() {
+        // 5-Q: two blocks of 15 data codewords, then two of 16, each with 18 EC codewords.
+        let version = QRVersion::try_from(5).unwrap();
+        let level = ErrorCorrectionLevel::Q;
+        let info = ec_block_info(version, level);
+        let data: Vec<u8> = (0..data_codewords(version, level) as u8).collect();
+
+        let interleaved = bits_to_bytes(&interleave(&bytes_to_bits(&data), version, level));
+        let blocks = deinterleave(&interleaved, info);
+
+        assert_eq!(blocks.iter().map(Vec::len).collect::<Vec<_>>(), [33, 33, 34, 34]);
+        let recovered: Vec<u8> = blocks.iter().zip([15, 15, 16, 16]).flat_map(|(block, length)| block[..length].to_vec()).collect();
+        assert_eq!(recovered, data);
+    }
+}
