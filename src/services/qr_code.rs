@@ -151,7 +151,7 @@ pub(crate) fn create_qr_code(
     version:Option<QRVersion>
 ) -> Result<QRMatrix, QRCreationError> {
     let encoded_data = create_qr_code_bits(data, error_correction_level, encoding_mode, version)?;
-    let mut structure = QRMatrix::new(encoded_data.version.into());
+    let mut structure = QRMatrix::new(encoded_data.version, error_correction_level);
     let data_codewords = apply_formatting(encoded_data.bits, encoded_data.version, error_correction_level);
     let formatted_bits = bytes_to_bits(&data_codewords);
     let error_corrected_data = interleave(&formatted_bits, encoded_data.version, error_correction_level);
