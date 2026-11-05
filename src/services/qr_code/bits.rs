@@ -13,6 +13,24 @@ pub(crate) fn write_bits(bits: &mut BitVec<u8, Lsb0>, value: u32, bit_length: us
     bits.extend((0..bit_length).rev().map(|i| (value >> i) & 1 == 1));
 }
 
+/// Packs a byte-aligned, MSB-first-per-byte bitstream into bytes. Deliberately not
+/// `chunk.load_be()`: on `Lsb0` storage, `load_be`/`load_le` both number bits by the storage's
+/// own LSB-first convention, not by logical push order, so they'd return each byte bit-reversed.
+/// Folding over `.iter()` reads logical order directly and sidesteps that entirely.
+pub(crate) fn bits_to_bytes(bits: &BitSlice<u8, Lsb0>) -> Vec<u8> {
+    debug_assert_eq!(bits.len() % 8, 0, "bits must be byte-aligned");
+    bits.chunks(8).map(|chunk| chunk.iter().fold(0u8, |acc, bit| (acc << 1) | *bit as u8)).collect()
+}
+
+/// The inverse of `bits_to_bytes`: appends `bytes` onto a fresh bitstream, each byte MSB-first.
+pub(crate) fn bytes_to_bits(bytes: &[u8]) -> BitVec<u8, Lsb0> {
+    let mut bits = BitVec::with_capacity(bytes.len() * 8);
+    for &byte in bytes {
+        write_bits(&mut bits, byte as u32, 8);
+    }
+    bits
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -45,5 +63,16 @@ mod tests {
     fn write_bits_rejects_a_value_that_does_not_fit() {
         let mut bits = BitVec::new();
         write_bits(&mut bits, 0b1000, 3);
+    }
+
+    #[test]
+    fn bytes_to_bits_and_back_round_trips() {
+        let original = [0x10, 0x20, 0xEC, 0x00, 0xFF];
+        assert_eq!(bits_to_bytes(&bytes_to_bits(&original)), original);
+    }
+
+    #[test]
+    fn bytes_to_bits_is_msb_first_per_byte() {
+        assert_eq!(bytes_to_bits(&[0b10110010]), bits![1, 0, 1, 1, 0, 0, 1, 0]);
     }
 }

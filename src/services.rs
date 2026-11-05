@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 pub mod sqlite;
 pub mod memory;
+pub mod qr_code;
 #[derive(Clone, LightClone)]
 pub struct Todo {
     pub id: Uuid,

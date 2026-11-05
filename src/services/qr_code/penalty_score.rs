@@ -200,8 +200,7 @@ pub fn penalty_score_mt(bits: &BitSlice<u8, Lsb0>, width: usize, height: usize) 
 
 // The grid-area crossover point measured by this crate's `penalty_score` benchmark: below it,
 // `thread::scope`'s spawn overhead outweighs the parallel work, and above it the parallel work
-// wins. This is specific to the machine it was measured on, not a universal constant — re-check
-// it with `cargo bench -- penalty_score` if the sub-scores change or this runs somewhere else.
+// wins.
 const MT_THRESHOLD_AREA: usize = 97 * 97;
 
 /// Picks `penalty_score` or `penalty_score_mt`, whichever benchmarked faster for a grid this

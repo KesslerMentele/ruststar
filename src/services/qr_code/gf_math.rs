@@ -41,11 +41,9 @@ const LOG_TABLE: [u8; 256] =[
 
 /// One of the valid error-correction codeword counts a QR generator polynomial can be built
 /// for. Constructible only via `TryFrom<u8>`, which rejects any length not in `ALL`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EcLength(u8);
 
-#[allow(dead_code)]
 impl EcLength {
     /// Every valid EC codeword length, in the same order as `EC_POLYNOMIALS` below (so a
     /// length's index in `ALL` is also its index into `EC_POLYNOMIALS`).
@@ -286,6 +284,7 @@ fn reed_solomon_remainder(data: GF256Polynomial, ec_len: EcLength) -> GF256Polyn
     poly.truncate(t);
     GF256Polynomial(poly)
 }
+
 /// The `ec_len` error correction codewords for one block of `data` codewords. Both are in
 /// transmission order, so `data[0]` is the message polynomial's highest-degree coefficient; this
 /// is the same convention `correct_block` reads a block in.

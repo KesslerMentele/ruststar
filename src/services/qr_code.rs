@@ -1,14 +1,23 @@
 use bitvec::prelude::*;
-use crate::services::qr_code::encoder::{encode_data_by_encoding_plan, encode_single_segment, EncodeError};
-use crate::services::qr_code::segmenter::{best_single_mode, segment, SegmentError, SegmentMode};
+use crate::services::qr_code::{
+    bits::bytes_to_bits,
+    blocks::interleave,
+    structure::QRMatrix,
+    encoder::{apply_formatting, encode_data_by_encoding_plan, encode_single_segment, EncodeError},
+    segmenter::{best_single_mode, segment, SegmentError, SegmentMode},
+};
+
 
 pub mod penalty_score;
 pub mod gf_math;
 pub mod encoder;
+pub mod decoder;
 pub mod bits;
 pub mod segmenter;
 mod capacity;
 mod structure;
+pub mod blocks;
+pub(crate) mod prelude;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QRVersionError {
@@ -25,6 +34,16 @@ impl TryFrom<u8> for QRVersion {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         if value >= 1 && value <= 40 {Ok(QRVersion{version:value})} else {Err(QRVersionError::OutOfBounds(value)) }
+    }
+}
+impl Into<u8> for QRVersion {
+    fn into(self) -> u8 {
+        self.version
+    }
+}
+impl Into<usize> for QRVersion {
+    fn into(self) -> usize {
+        self.version as usize
     }
 }
 
@@ -96,8 +115,7 @@ pub(crate) struct EncodedData {
     pub(crate) bits: BitVec<u8, Lsb0>,
 }
 
-#[allow(dead_code)]
-fn create_qr_code_bits(
+pub(crate) fn create_qr_code_bits(
     data: &str,
     error_correction_level:ErrorCorrectionLevel,
     encoding_mode: Option<EncodingMode>,
@@ -126,7 +144,20 @@ fn create_qr_code_bits(
     encode_single_segment(data, mode, version_choice, error_correction_level)
 }
 
-
+pub(crate) fn create_qr_code(
+    data:&str,
+    error_correction_level:ErrorCorrectionLevel,
+    encoding_mode: Option<EncodingMode>,
+    version:Option<QRVersion>
+) -> Result<QRMatrix, QRCreationError> {
+    let encoded_data = create_qr_code_bits(data, error_correction_level, encoding_mode, version)?;
+    let mut structure = QRMatrix::new(encoded_data.version.into());
+    let data_codewords = apply_formatting(encoded_data.bits, encoded_data.version, error_correction_level);
+    let formatted_bits = bytes_to_bits(&data_codewords);
+    let error_corrected_data = interleave(&formatted_bits, encoded_data.version, error_correction_level);
+    structure.place_data(&error_corrected_data);
+    Ok(structure)
+}
 
 #[cfg(test)]
 mod tests {
@@ -257,5 +288,96 @@ mod tests {
     fn segmented_empty_input_is_empty() {
         let bits = create_qr_code_bits("", ErrorCorrectionLevel::M, Some(EncodingMode::Segmented), None).unwrap().bits;
         assert!(bits.is_empty());
+    }
+
+    /// Reads a matrix's placed codewords back out, in transmission order, and un-interleaves
+    /// them into one `data ++ error_correction` byte sequence per block (group 1's blocks,
+    /// then group 2's). The inverse of what `blocks::interleave` does.
+    fn recover_codeword_blocks(matrix: &QRMatrix, info: capacity::EcBlockInfo) -> Vec<Vec<u8>> {
+        let total_codewords = capacity::total_codewords(matrix.version());
+        let bits: BitVec<u8, Lsb0> = matrix
+            .data_module_order()
+            .take(total_codewords * 8)
+            .map(|(row, col)| matrix.is_dark(row, col))
+            .collect();
+        let bytes = bits::bits_to_bytes(&bits);
+        let mut remaining = bytes.iter().copied();
+
+        let block_lengths: Vec<usize> = std::iter::repeat_n(info.group_1_data_codewords as usize, info.group_1_blocks as usize)
+            .chain(std::iter::repeat_n(info.group_2_data_codewords as usize, info.group_2_blocks as usize))
+            .collect();
+        let mut blocks: Vec<Vec<u8>> = block_lengths.iter().map(|&len| Vec::with_capacity(len)).collect();
+
+        let max_data_len = block_lengths.iter().copied().max().unwrap_or(0);
+        for i in 0..max_data_len {
+            for (block, &len) in blocks.iter_mut().zip(&block_lengths) {
+                if i < len {
+                    block.push(remaining.next().unwrap());
+                }
+            }
+        }
+        for _ in 0..info.ec_codewords_per_block {
+            for block in &mut blocks {
+                block.push(remaining.next().unwrap());
+            }
+        }
+        assert!(remaining.next().is_none(), "leftover codewords after un-interleaving every block");
+        blocks
+    }
+
+    #[test]
+    fn create_qr_code_round_trips_through_error_correction() {
+        use crate::services::qr_code::gf_math::{correct_block, EcLength};
+
+        let cases = [
+            ("01234567", ErrorCorrectionLevel::M),
+            ("HELLO WORLD", ErrorCorrectionLevel::Q),
+            ("The quick brown fox jumps over the lazy dog.", ErrorCorrectionLevel::L),
+            ("点点abc", ErrorCorrectionLevel::H),
+        ];
+        for (data, level) in cases {
+            let matrix = create_qr_code(data, level, None, None).unwrap();
+            let info = capacity::ec_block_info(matrix.version(), level);
+            let ec_len = EcLength::try_from(info.ec_codewords_per_block as u8).unwrap();
+
+            for block in recover_codeword_blocks(&matrix, info) {
+                assert_eq!(correct_block(&block, ec_len), block, "EC mismatch for {data:?} at {level:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn create_qr_code_round_trips_to_the_original_string() {
+        use crate::services::qr_code::decoder::decode_segments;
+        use crate::services::qr_code::gf_math::{correct_block, EcLength};
+
+        let cases = [
+            ("01234567", ErrorCorrectionLevel::M),
+            ("HELLO WORLD", ErrorCorrectionLevel::Q),
+            ("AC-42", ErrorCorrectionLevel::M),
+            ("a1234567", ErrorCorrectionLevel::L),
+            ("The quick brown fox jumps over the lazy dog.", ErrorCorrectionLevel::L),
+            ("点点abc", ErrorCorrectionLevel::H),
+            ("é1234567", ErrorCorrectionLevel::M),
+            ("", ErrorCorrectionLevel::M),
+        ];
+        for (original_string, level) in cases {
+            let matrix = create_qr_code(original_string, level, None, None).unwrap();
+            let info = capacity::ec_block_info(matrix.version(), level);
+            let ec_len = EcLength::try_from(info.ec_codewords_per_block as u8).unwrap();
+            let ec_per_block = info.ec_codewords_per_block as usize;
+
+            let mut data_codewords = Vec::new();
+
+            for block in recover_codeword_blocks(&matrix, info) {
+                let corrected = correct_block(&block, ec_len);
+                data_codewords.extend_from_slice(&corrected[..corrected.len() - ec_per_block]);
+            }
+
+            let decoded_string = decode_segments(&data_codewords, matrix.version())
+                .unwrap_or_else(|e| panic!("decode failed for {original_string:?} at {level:?}: {e:?}"));
+
+            assert_eq!(decoded_string, original_string, "round trip mismatch for {original_string:?} at {level:?}");
+        }
     }
 }

@@ -16,10 +16,8 @@
 // encodings, so for now their areas are only reserved (left light).
 
 use std::ops::RangeInclusive;
-
 use bitvec::prelude::*;
-
-use super::QRVersion;
+use crate::services::qr_code::QRVersion;
 
 /// Alignment pattern center coordinates for each version, indexed by `version - 1`. Every pairing
 /// of two coordinates is a center, apart from the three that overlap a finder pattern.
@@ -78,11 +76,10 @@ pub(crate) struct QRMatrix {
     function: BitVec<u8, Lsb0>,
 }
 
-#[allow(dead_code)]
 impl QRMatrix {
     /// An all-light matrix for `version`, with no function patterns drawn.
-    pub(crate) fn new(version: QRVersion) -> Self {
-        let size = version.version as usize * 4 + 17;
+    pub(crate) fn new_empty(version: QRVersion) -> Self {
+        let size = <QRVersion as Into<usize>>::into(version) * 4 + 17;
         QRMatrix {
             version,
             size,
@@ -93,8 +90,8 @@ impl QRMatrix {
 
     /// A matrix for `version` with every function pattern drawn and the format and version
     /// information areas reserved.
-    pub(crate) fn with_function_patterns(version: QRVersion) -> Self {
-        let mut matrix = QRMatrix::new(version);
+    pub(crate) fn new(version: QRVersion) -> Self {
+        let mut matrix = QRMatrix::new_empty(version);
         matrix.draw_finder_patterns();
         matrix.draw_separators();
         matrix.draw_timing_patterns();
@@ -108,6 +105,11 @@ impl QRMatrix {
     /// Width and height, in modules.
     pub(crate) fn size(&self) -> usize {
         self.size
+    }
+
+    /// The version this matrix was built for.
+    pub(crate) fn version(&self) -> QRVersion {
+        self.version
     }
 
     /// Every module, row-major, `true` for dark.
@@ -180,7 +182,7 @@ impl QRMatrix {
     /// center that doesn't overlap a finder pattern. Those on row or column 6 overlap the timing
     /// patterns, but agree with them module for module, since every center is even.
     fn draw_alignment_patterns(&mut self) {
-        let coordinates = ALIGNMENT_PATTERN_COORDINATES[self.version.version as usize - 1];
+        let coordinates:&[u8] = ALIGNMENT_PATTERN_COORDINATES[<QRVersion as Into<usize>>::into(self.version) - 1];
         let (Some(&first), Some(&last)) = (coordinates.first(), coordinates.last()) else {
             return;
         };
@@ -196,7 +198,7 @@ impl QRMatrix {
 
     /// The single module above the bottom-left finder's separator that is always dark.
     fn draw_dark_module(&mut self) {
-        self.set_function(self.version.version as usize * 4 + 9, 8, true);
+        self.set_function(<QRVersion as Into<usize>>::into(self.version) * 4 + 9, 8, true);
     }
 
     /// The two copies of the 15 format information modules: wrapped around the top-left finder
@@ -217,7 +219,7 @@ impl QRMatrix {
     /// The two 6x3 copies of the version information, above the bottom-left finder and left of
     /// the top-right finder. Only version 7 and up carry it.
     fn reserve_version_information(&mut self) {
-        if self.version.version < 7 {
+        if <QRVersion as Into<usize>>::into(self.version) < 7 {
             return;
         }
         for i in 0..6 {
@@ -249,7 +251,7 @@ impl QRMatrix {
     /// first. Modules left over after the last bit (the 0 to 7 remainder bits) are left light.
     ///
     /// Panics if `bits` holds more bits than the data modules do.
-    pub(crate) fn place_data(&mut self, bits: &BitSlice<u8, Lsb0>) {
+    pub(crate) fn place_data(&mut self, bits: &BitVec<u8, Lsb0>) {
         let positions: Vec<(usize, usize)> = self.data_module_order().collect();
         assert!(
             bits.len() <= positions.len(),
@@ -268,10 +270,7 @@ impl QRMatrix {
 mod tests {
     use super::*;
     use crate::services::qr_code::capacity::raw_data_modules;
-
-    fn v(version: u8) -> QRVersion {
-        QRVersion { version }
-    }
+    use crate::services::qr_code::QRVersion;
 
     /// Renders a region as rows of `#` (dark function), `.` (light function) or ` ` (not a
     /// function module).
@@ -290,14 +289,14 @@ mod tests {
 
     #[test]
     fn size_grows_by_four_per_version() {
-        assert_eq!(QRMatrix::new(v(1)).size(), 21);
-        assert_eq!(QRMatrix::new(v(40)).size(), 177);
+        assert_eq!(QRMatrix::new_empty(QRVersion::try_from(1).unwrap()).size(), 21);
+        assert_eq!(QRMatrix::new_empty(QRVersion::try_from(40).unwrap()).size(), 177);
     }
 
     #[test]
     fn top_left_corner_of_version_1() {
         // Finder, separator, timing modules at (6, 8) and (8, 6), and the reserved format area.
-        let matrix = QRMatrix::with_function_patterns(v(1));
+        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap());
         assert_eq!(
             render(&matrix, 0..=8, 0..=8),
             [
@@ -316,7 +315,7 @@ mod tests {
 
     #[test]
     fn finder_patterns_sit_in_three_corners() {
-        let matrix = QRMatrix::with_function_patterns(v(1));
+        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap());
         let finder = ["#######", "#.....#", "#.###.#", "#.###.#", "#.###.#", "#.....#", "#######"];
         assert_eq!(render(&matrix, 0..=6, 14..=20), finder);
         assert_eq!(render(&matrix, 14..=20, 0..=6), finder);
@@ -326,7 +325,7 @@ mod tests {
 
     #[test]
     fn separators_border_the_inner_sides_of_each_finder() {
-        let matrix = QRMatrix::with_function_patterns(v(1));
+        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap());
         for i in 0..8 {
             for (row, col) in [(7, i), (i, 7), (7, 20 - i), (i, 13), (13, i), (20 - i, 7)] {
                 assert!(matrix.is_function(row, col) && !matrix.is_dark(row, col), "({row}, {col})");
@@ -336,7 +335,7 @@ mod tests {
 
     #[test]
     fn timing_patterns_alternate_between_the_separators() {
-        let matrix = QRMatrix::with_function_patterns(v(1));
+        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap());
         assert_eq!(render(&matrix, 6..=6, 7..=13), [".#.#.#."]);
         assert_eq!(render(&matrix, 7..=13, 6..=6), [".", "#", ".", "#", ".", "#", "."]);
     }
@@ -344,7 +343,7 @@ mod tests {
     #[test]
     fn dark_module_sits_above_the_bottom_left_separator() {
         for version in [1, 7, 40] {
-            let matrix = QRMatrix::with_function_patterns(v(version));
+            let matrix = QRMatrix::new(QRVersion::try_from(version).unwrap());
             let row = version as usize * 4 + 9;
             assert!(matrix.is_function(row, 8) && matrix.is_dark(row, 8), "version {version}");
             assert_eq!(row, matrix.size() - 8);
@@ -353,13 +352,13 @@ mod tests {
 
     #[test]
     fn version_1_has_no_alignment_pattern() {
-        let matrix = QRMatrix::with_function_patterns(v(1));
+        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap());
         assert!(!matrix.is_function(14, 14));
     }
 
     #[test]
     fn version_2_has_one_alignment_pattern() {
-        let matrix = QRMatrix::with_function_patterns(v(2));
+        let matrix = QRMatrix::new(QRVersion::try_from(2).unwrap());
         assert!(is_alignment_center(&matrix, 18, 18));
     }
 
@@ -371,7 +370,7 @@ mod tests {
     #[test]
     fn alignment_patterns_skip_the_finder_corners() {
         // Version 7's coordinates are 6, 22, 38: nine pairings, less the three finder corners.
-        let matrix = QRMatrix::with_function_patterns(v(7));
+        let matrix = QRMatrix::new(QRVersion::try_from(7).unwrap());
         let centers: Vec<(usize, usize)> = [6, 22, 38]
             .into_iter()
             .flat_map(|row| [6, 22, 38].map(|col| (row, col)))
@@ -388,7 +387,7 @@ mod tests {
     #[test]
     fn alignment_patterns_agree_with_the_timing_patterns() {
         // The (6, 22) alignment pattern in version 7 crosses row 6's timing pattern.
-        let matrix = QRMatrix::with_function_patterns(v(7));
+        let matrix = QRMatrix::new(QRVersion::try_from(7).unwrap());
         for col in 8..matrix.size() - 8 {
             assert_eq!(matrix.is_dark(6, col), col % 2 == 0, "column {col}");
         }
@@ -400,16 +399,16 @@ mod tests {
             let coordinates = ALIGNMENT_PATTERN_COORDINATES[version as usize - 1];
             assert_eq!(coordinates.len(), version as usize / 7 + 2, "version {version}");
             assert_eq!(coordinates[0], 6);
-            assert_eq!(*coordinates.last().unwrap() as usize, QRMatrix::new(v(version)).size() - 7);
+            assert_eq!(*coordinates.last().unwrap() as usize, QRMatrix::new_empty(QRVersion::try_from(version).unwrap()).size() - 7);
         }
     }
 
     #[test]
     fn version_information_is_reserved_from_version_7() {
-        let below = QRMatrix::with_function_patterns(v(6));
+        let below = QRMatrix::new(QRVersion::try_from(6).unwrap());
         assert!(!below.is_function(0, below.size() - 11));
 
-        let matrix = QRMatrix::with_function_patterns(v(7));
+        let matrix = QRMatrix::new(QRVersion::try_from(7).unwrap());
         let size = matrix.size();
         for i in 0..6 {
             for j in size - 11..size - 8 {
@@ -420,7 +419,7 @@ mod tests {
 
     #[test]
     fn data_order_starts_upwards_from_the_bottom_right_corner() {
-        let matrix = QRMatrix::with_function_patterns(v(1));
+        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap());
         let order: Vec<_> = matrix.data_module_order().take(4).collect();
         assert_eq!(order, [(20, 20), (20, 19), (19, 20), (19, 19)]);
     }
@@ -429,7 +428,7 @@ mod tests {
     fn data_order_turns_downwards_below_the_top_right_format_area() {
         // The first strip runs rows 20 up to 9 (24 modules); row 8 is format information, so the
         // next strip starts back down at row 9, in columns 18 and 17.
-        let matrix = QRMatrix::with_function_patterns(v(1));
+        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap());
         let order: Vec<_> = matrix.data_module_order().skip(22).take(4).collect();
         assert_eq!(order, [(9, 20), (9, 19), (9, 18), (9, 17)]);
     }
@@ -437,7 +436,7 @@ mod tests {
     #[test]
     fn data_order_skips_the_vertical_timing_column() {
         // Version 1's last three strips are columns 5-4 (down), 3-2 (up) and 1-0 (down).
-        let matrix = QRMatrix::with_function_patterns(v(1));
+        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap());
         let order: Vec<_> = matrix.data_module_order().collect();
         assert!(order.iter().all(|&(_, col)| col != 6));
         let last_strip_start = order.iter().position(|&(_, col)| col <= 5).unwrap();
@@ -448,28 +447,28 @@ mod tests {
     #[test]
     fn data_order_visits_every_data_module_exactly_once() {
         for version in 1..=40u8 {
-            let matrix = QRMatrix::with_function_patterns(v(version));
+            let matrix = QRMatrix::new(QRVersion::try_from(version).unwrap());
             let order: Vec<_> = matrix.data_module_order().collect();
             let distinct: std::collections::HashSet<_> = order.iter().collect();
-            assert_eq!(order.len(), raw_data_modules(v(version)), "version {version}");
+            assert_eq!(order.len(), raw_data_modules(version.try_into().unwrap()), "version {version}");
             assert_eq!(distinct.len(), order.len(), "version {version}");
         }
     }
 
     #[test]
     fn place_data_writes_bits_in_data_order() {
-        let mut matrix = QRMatrix::with_function_patterns(v(1));
-        let bits = bits![u8, Lsb0; 1, 0, 1, 1, 0, 0, 1];
-        matrix.place_data(bits);
+        let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap());
+        let bits = bitvec![u8, Lsb0; 1, 0, 1, 1, 0, 0, 1];
+        matrix.place_data(&bits);
         let placed: Vec<bool> = matrix.data_module_order().take(bits.len()).map(|(row, col)| matrix.is_dark(row, col)).collect();
         assert_eq!(placed, bits.iter().map(|bit| *bit).collect::<Vec<_>>());
     }
 
     #[test]
     fn place_data_leaves_function_modules_alone() {
-        let blank = QRMatrix::with_function_patterns(v(7));
+        let blank = QRMatrix::new(QRVersion::try_from(7).unwrap());
         let mut matrix = blank.clone();
-        let capacity = raw_data_modules(v(7));
+        let capacity = raw_data_modules(QRVersion { version: 7});
         matrix.place_data(&bitvec![u8, Lsb0; 1; capacity]);
         for row in 0..matrix.size() {
             for col in 0..matrix.size() {
@@ -485,7 +484,7 @@ mod tests {
     #[test]
     fn place_data_leaves_the_remainder_bits_light() {
         // Version 2 has 359 data modules: 44 codewords (352 bits) and 7 remainder bits.
-        let mut matrix = QRMatrix::with_function_patterns(v(2));
+        let mut matrix = QRMatrix::new(QRVersion::try_from(2).unwrap());
         matrix.place_data(&bitvec![u8, Lsb0; 1; 352]);
         let dark: Vec<bool> = matrix.data_module_order().map(|(row, col)| matrix.is_dark(row, col)).collect();
         assert!(dark[..352].iter().all(|&d| d));
@@ -496,15 +495,15 @@ mod tests {
     #[test]
     #[should_panic(expected = "209 bits don't fit in 208 data modules")]
     fn place_data_rejects_more_bits_than_data_modules() {
-        let mut matrix = QRMatrix::with_function_patterns(v(1));
+        let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap());
         matrix.place_data(&bitvec![u8, Lsb0; 0; 209]);
     }
 
     #[test]
     fn place_data_accepts_create_qr_code_bits_output() {
         use crate::services::qr_code::{create_qr_code_bits, EncodingMode, ErrorCorrectionLevel};
-        let bits = create_qr_code_bits("01234567", ErrorCorrectionLevel::M, Some(EncodingMode::Segmented), Some(v(1))).unwrap().bits;
-        let mut matrix = QRMatrix::with_function_patterns(v(1));
+        let bits = create_qr_code_bits("01234567", ErrorCorrectionLevel::M, Some(EncodingMode::Segmented), Some(QRVersion { version: 1})).unwrap().bits;
+        let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap());
         matrix.place_data(&bits);
         // Mode indicator 0001: the first three modules light, the fourth dark.
         let first: Vec<bool> = matrix.data_module_order().take(4).map(|(row, col)| matrix.is_dark(row, col)).collect();
@@ -515,9 +514,9 @@ mod tests {
     fn function_patterns_leave_exactly_the_data_modules_free() {
         // Cross-checks every pattern's footprint against the capacity tables' module count.
         for version in 1..=40u8 {
-            let matrix = QRMatrix::with_function_patterns(v(version));
+            let matrix = QRMatrix::new(QRVersion::try_from(version).unwrap());
             let free = matrix.size() * matrix.size() - matrix.function.count_ones();
-            assert_eq!(free, raw_data_modules(v(version)), "version {version}");
+            assert_eq!(free, raw_data_modules(version.try_into().unwrap()), "version {version}");
         }
     }
 }

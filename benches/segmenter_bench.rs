@@ -1,8 +1,7 @@
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use ruststar::services::qr_code::segmenter::{segment, VersionChoice};
-use ruststar::services::qr_code::{ErrorCorrectionLevel, QRVersion};
+use ruststar::services::qr_code::{segmenter::segment, ErrorCorrectionLevel, QRVersion, VersionChoice};
 
 // Input lengths in chars, from a short URL up to near version 40-L's limit for Kanji (the
 // tightest-packing mode per char that still fits at 1500).
