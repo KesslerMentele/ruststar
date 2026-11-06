@@ -14,7 +14,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use futures::stream;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
-use crate::pages::{portfolio, todo, toys};
+use crate::pages::{portfolio, qr_generator, todo, toys};
 use crate::services::{TodoService, memory::InMemoryTodoService, sqlite::SqliteTodoService, UserService, sqlite::SqliteUserService};
 use tracing_subscriber::{EnvFilter, prelude::*};
 
@@ -78,12 +78,14 @@ async fn main() {
     let todo_routes = todo::router();
     let toy_routes = toys::router();
     let portfolio_routes = portfolio::router();
+    let qr_routes = qr_generator::router();
 
     let app = Router::new()
         .merge(portfolio_routes)
         .nest_service("/assets", ServeDir::new("assets"))
         .nest("/todos", todo_routes)
         .nest("/toys", toy_routes)
+        .nest("/qr", qr_routes)
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 

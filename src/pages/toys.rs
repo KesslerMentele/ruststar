@@ -64,10 +64,6 @@ async fn ttt_post(Path(cell): Path<usize>, Json(payload): Json<GameGrid>) -> Res
 
 
 }
-async fn game_list_get() -> Result<impl IntoResponse, SqliteError> { 
-    println!("GET /toys/pages");
-    Ok(games_page())
-}
 async fn game_get(Path(slug): Path<String>) -> Result<impl IntoResponse, SqliteError> {
     println!("GET /todos/pages/{slug}");
     let markup =render_selected_game(&slug);
@@ -169,7 +165,7 @@ fn restart_button(game:Game) -> Markup {
 
 pub fn router() -> Router<Arc<AppState>> {
      Router::new()
-        .route("/pages", get(game_list_get))
+        .route("/pages", get(games_page()))
         .route("/pages/{slug}", get(game_get))
         .route("/pages/ttt/{cell}", post(ttt_post))
 }

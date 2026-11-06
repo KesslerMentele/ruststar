@@ -1,7 +1,7 @@
 pub(crate) mod toys;
 pub(crate) mod portfolio;
 pub(crate) mod todo;
-mod qr_explanations;
+pub(crate) mod qr_generator;
 
 use maud::{html, Markup, DOCTYPE};
 

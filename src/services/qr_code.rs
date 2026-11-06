@@ -1,4 +1,5 @@
 use bitvec::prelude::*;
+use serde::Deserialize;
 use crate::services::qr_code::{
     bits::bytes_to_bits,
     blocks::interleave,
@@ -24,7 +25,7 @@ pub enum QRVersionError {
     OutOfBounds(u8)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct QRVersion {
     version: u8,
 }
@@ -57,7 +58,7 @@ pub enum VersionChoice {
     Auto,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub enum EncodingMode {
     Numeric,
     Alphanumeric,
@@ -80,7 +81,7 @@ impl From<SegmentMode> for EncodingMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum ErrorCorrectionLevel {
     L,
     M,
@@ -116,9 +117,19 @@ pub(crate) struct EncodedData {
     pub(crate) bits: BitVec<u8, Lsb0>,
 }
 
+#[derive(Debug, Deserialize)]
 pub(crate) enum MaskSetting {
     Exact(u8),
     ChooseBest
+}
+
+#[derive(Deserialize)]
+pub struct QRData {
+    data: String,
+    error_correction_level: ErrorCorrectionLevel,
+    encoding_mode: EncodingMode,
+    version: QRVersion,
+    mask: MaskSetting
 }
 
 fn create_qr_code_bits(
@@ -161,18 +172,12 @@ fn create_error_corrected_data(encoded_data: EncodedData, error_correction_level
         encoded_data.version, error_correction_level)
 }
 
-pub(crate) fn create_qr_code(
-    data:&str,
-    error_correction_level:ErrorCorrectionLevel,
-    encoding_mode: Option<EncodingMode>,
-    version:Option<QRVersion>,
-    mask: Option<MaskSetting>
-) -> Result<QRMatrix, QRCreationError> {
-    let encoded_data = create_qr_code_bits(data, error_correction_level, encoding_mode, version)?;
-    let mut structure = QRMatrix::new(encoded_data.version, error_correction_level);
-    let error_corrected_data = create_error_corrected_data(encoded_data, error_correction_level);
+pub(crate) fn create_qr_code(data:QRData) -> Result<QRMatrix, QRCreationError> {
+    let encoded_data = create_qr_code_bits(&*data.data, data.error_correction_level, Option::from(data.encoding_mode), Option::from(data.version))?;
+    let mut structure = QRMatrix::new(encoded_data.version, data.error_correction_level);
+    let error_corrected_data = create_error_corrected_data(encoded_data, data.error_correction_level);
     structure.place_data(&error_corrected_data);
-    match structure.set_mask(mask.unwrap_or(MaskSetting::ChooseBest)) {
+    match structure.set_mask(data.mask) {
         Ok(()) => Ok(structure),
         Err(mask_error) => Err(QRCreationError::MaskingFailed(mask_error))
     }
@@ -325,7 +330,7 @@ mod tests {
             ("", ErrorCorrectionLevel::M),
         ];
         for (original_string, level) in cases {
-            let matrix = create_qr_code(original_string, level, None, None, None).unwrap();
+            let matrix = create_qr_code(QRData { data: original_string.parse().unwrap(), error_correction_level: level, encoding_mode: EncodingMode::AutoDetect, version: QRVersion {version: 1}, mask: MaskSetting::ChooseBest }).unwrap();
             let decoded_string = decode_modules(matrix.modules())
                 .unwrap_or_else(|e| panic!("decode failed for {original_string:?} at {level:?}: {e:?}"));
 
