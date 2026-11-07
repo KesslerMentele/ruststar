@@ -19,7 +19,7 @@ use bitvec::prelude::*;
 use encoding_rs::{EncoderResult, SHIFT_JIS};
 use crate::services::qr_code::{
     EncodedData, EncodingMode, ErrorCorrectionLevel,
-    QRCreationError, VersionChoice, QRVersion,
+    QRCreationError, QRVersion, SegmentStats,
     capacity, bits::write_bits,
     gf_math::{error_correction_codewords, EcLength},
     segmenter::{choose_version, SegmentMode, SegmentPlan, VersionGroup},
@@ -234,17 +234,33 @@ fn write_segment_header(bits: &mut BitVec<u8, Lsb0>, mode: SegmentMode, text: &s
     write_bits(bits, count as u32, group.char_count_bits(mode));
 }
 
+/// Appends a segment's header and data bits to `bits`, returning where they landed.
+fn append_segment(
+    bits: &mut BitVec<u8, Lsb0>,
+    mode: SegmentMode,
+    text: &str,
+    group: VersionGroup,
+    data_bits: &mut BitVec<u8, Lsb0>,
+) -> SegmentStats {
+    let start_bit = bits.len();
+    write_segment_header(bits, mode, text, group);
+    let header_bits = bits.len() - start_bit;
+    bits.append(data_bits);
+    SegmentStats { mode, start_bit, end_bit: bits.len(), header_bits }
+}
+
 /// Encodes every segment of `plan` as a header followed by its data bits, back to back with no
 /// byte alignment between segments.
-pub(crate) fn encode_data_by_encoding_plan(data:&str, plan: SegmentPlan) -> Result<BitVec<u8, Lsb0>, EncodeError> {
+pub(crate) fn encode_data_by_encoding_plan(data:&str, plan: SegmentPlan) -> Result<EncodedData, EncodeError> {
     let group = VersionGroup::of(plan.version);
     let mut bits = BitVec::with_capacity(plan.data_bits_length);
+    let mut segments = Vec::with_capacity(plan.segments.len());
     for segment in plan.segments {
         let text = &data[segment.range];
-        write_segment_header(&mut bits, segment.mode, text, group);
-        bits.append(&mut encode_data_with_mode(text, EncodingMode::from(segment.mode))?);
+        let mut data_bits = encode_data_with_mode(text, EncodingMode::from(segment.mode))?;
+        segments.push(append_segment(&mut bits, segment.mode, text, group, &mut data_bits));
     }
-    Ok(bits)
+    Ok(EncodedData { version: plan.version, bits, segments })
 }
 
 /// Encodes all of `data` as one segment in `mode`, header included, in the version chosen per
@@ -252,7 +268,7 @@ pub(crate) fn encode_data_by_encoding_plan(data:&str, plan: SegmentPlan) -> Resu
 pub(crate) fn encode_single_segment(
     data: &str,
     mode: SegmentMode,
-    choice: VersionChoice,
+    choice: QRVersion,
     error_correction_level: ErrorCorrectionLevel,
 ) -> Result<EncodedData, QRCreationError> {
     let mut data_bits = encode_data_with_mode(data, EncodingMode::from(mode))?;
@@ -261,9 +277,8 @@ pub(crate) fn encode_single_segment(
     })?;
 
     let mut bits = BitVec::with_capacity(needed_bits);
-    write_segment_header(&mut bits, mode, data, VersionGroup::of(version));
-    bits.append(&mut data_bits);
-    Ok(EncodedData { version, bits })
+    let segment = append_segment(&mut bits, mode, data, VersionGroup::of(version), &mut data_bits);
+    Ok(EncodedData { version, bits, segments: vec![segment] })
 }
 
 /// Fills out `bits` to exactly the data codewords `version` holds at `error_correction_level`:
@@ -273,7 +288,7 @@ pub(crate) fn encode_single_segment(
 /// Panics if `bits` is already longer than the data codewords; segmenting checks capacity first.
 pub(crate) fn apply_formatting(
     mut bits: BitVec<u8, Lsb0>,
-    version: QRVersion,
+    version: u8,
     error_correction_level: ErrorCorrectionLevel,
 ) -> Vec<u8> {
     let data_codewords = capacity::data_codewords(version, error_correction_level);
@@ -307,12 +322,12 @@ pub(crate) fn apply_formatting(
 /// Panics if `data_codewords` isn't exactly the data codeword count `apply_formatting` produces.
 pub(crate) fn apply_error_correction(
     data_codewords: &[u8],
-    version: QRVersion,
+    version: u8,
     error_correction_level: ErrorCorrectionLevel,
 ) -> BitVec<u8, Lsb0> {
     assert_eq!(
         data_codewords.len(),
-        capacity::data_codewords(QRVersion::try_from(version).unwrap(), error_correction_level),
+        capacity::data_codewords(version, error_correction_level),
         "data codewords must fill the version exactly"
     );
     let block_count = capacity::error_correction_blocks(version, error_correction_level);
@@ -510,7 +525,7 @@ mod tests {
         assert_eq!(encode_structured_append(2, 3, 1).unwrap(), expected);
     }
 
-    fn single_segment_plan(mode: SegmentMode, data: &str, version: QRVersion) -> SegmentPlan {
+    fn single_segment_plan(mode: SegmentMode, data: &str, version: u8) -> SegmentPlan {
         use crate::services::qr_code::{segmenter::Segment};
         SegmentPlan {
             version: version ,
@@ -526,8 +541,8 @@ mod tests {
         write_bits(&mut expected, 0b1000, 4);
         write_bits(&mut expected, 1, 8);
         write_bits(&mut expected, 0x0D9F, 13);
-        let plan = single_segment_plan(SegmentMode::Kanji, "点", QRVersion::try_from(1).unwrap());
-        assert_eq!(encode_data_by_encoding_plan("点", plan).unwrap(), expected);
+        let plan = single_segment_plan(SegmentMode::Kanji, "点", 1);
+        assert_eq!(encode_data_by_encoding_plan("点", plan).unwrap().bits, expected);
     }
 
     #[test]
@@ -538,8 +553,8 @@ mod tests {
         write_bits(&mut expected, 2, 8);
         write_bits(&mut expected, 0xC3, 8);
         write_bits(&mut expected, 0xA9, 8);
-        let plan = single_segment_plan(SegmentMode::Byte, "é", QRVersion::try_from(1).unwrap());
-        assert_eq!(encode_data_by_encoding_plan("é", plan).unwrap(), expected);
+        let plan = single_segment_plan(SegmentMode::Byte, "é", 1);
+        assert_eq!(encode_data_by_encoding_plan("é", plan).unwrap().bits, expected);
     }
 
     #[test]
@@ -549,8 +564,8 @@ mod tests {
         write_bits(&mut expected, 0b0001, 4);
         write_bits(&mut expected, 1, 14);
         write_bits(&mut expected, 7, 4);
-        let plan = single_segment_plan(SegmentMode::Numeric, "7", QRVersion::try_from(27).unwrap());
-        assert_eq!(encode_data_by_encoding_plan("7", plan).unwrap(), expected);
+        let plan = single_segment_plan(SegmentMode::Numeric, "7", 27);
+        assert_eq!(encode_data_by_encoding_plan("7", plan).unwrap().bits, expected);
     }
     
     /// Packs a bitstream back into bytes, MSB first.
@@ -569,7 +584,7 @@ mod tests {
 
     #[test]
     fn formatting_matches_the_iso_18004_example() {
-        let codewords = apply_formatting(iso_example_bits(), QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let codewords = apply_formatting(iso_example_bits(), 1, ErrorCorrectionLevel::M);
         assert_eq!(
             codewords,
             [0x10, 0x20, 0x0C, 0x56, 0x61, 0x80, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11]
@@ -579,7 +594,7 @@ mod tests {
     #[test]
     fn formatting_empty_data_is_a_terminator_then_padding() {
         // 1-L holds 19 data codewords: one zero byte (terminator + alignment), then 18 pads.
-        let codewords = apply_formatting(BitVec::new(), QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::L);
+        let codewords = apply_formatting(BitVec::new(), 1, ErrorCorrectionLevel::L);
         let mut expected = vec![0x00];
         expected.extend([0xEC, 0x11].into_iter().cycle().take(18));
         assert_eq!(codewords, expected);
@@ -588,26 +603,26 @@ mod tests {
     #[test]
     fn formatting_shortens_the_terminator_when_capacity_runs_out() {
         // 1-H holds 72 bits; 70 data bits leave room for only 2 terminator bits and no padding.
-        let codewords = apply_formatting(bitvec![u8, Lsb0; 1; 70], QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::H);
+        let codewords = apply_formatting(bitvec![u8, Lsb0; 1; 70], 1, ErrorCorrectionLevel::H);
         assert_eq!(codewords, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC]);
     }
 
     #[test]
     fn formatting_adds_nothing_to_data_that_fills_capacity() {
-        let codewords = apply_formatting(bitvec![u8, Lsb0; 1; 72], QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::H);
+        let codewords = apply_formatting(bitvec![u8, Lsb0; 1; 72], 1, ErrorCorrectionLevel::H);
         assert_eq!(codewords, [0xFF; 9]);
     }
 
     #[test]
     #[should_panic(expected = "73 bits don't fit in 9 data codewords")]
     fn formatting_rejects_data_over_capacity() {
-        apply_formatting(bitvec![u8, Lsb0; 0; 73], QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::H);
+        apply_formatting(bitvec![u8, Lsb0; 0; 73], 1, ErrorCorrectionLevel::H);
     }
 
     #[test]
     fn error_correction_matches_the_iso_18004_example() {
-        let codewords = apply_formatting(iso_example_bits(), QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
-        let bits = apply_error_correction(&codewords, QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let codewords = apply_formatting(iso_example_bits(), 1, ErrorCorrectionLevel::M);
+        let bits = apply_error_correction(&codewords, 1, ErrorCorrectionLevel::M);
         let mut expected = codewords.clone();
         expected.extend([0xA5, 0x24, 0xD4, 0xC1, 0xED, 0x36, 0xC7, 0x87, 0x2C, 0x55]);
         assert_eq!(to_bytes(&bits), expected);
@@ -617,7 +632,7 @@ mod tests {
     fn error_correction_matches_hello_world_at_1_q() {
         // thonky.com's QR tutorial worked example.
         let data = [32, 91, 11, 120, 209, 114, 220, 77, 67, 64, 236, 17, 236];
-        let bits = apply_error_correction(&data, QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::Q);
+        let bits = apply_error_correction(&data, 1, ErrorCorrectionLevel::Q);
         let mut expected = data.to_vec();
         expected.extend([168, 72, 22, 82, 217, 54, 156, 0, 46, 15, 180, 122, 16]);
         assert_eq!(to_bytes(&bits), expected);
@@ -627,8 +642,8 @@ mod tests {
     fn error_correction_interleaves_blocks_of_two_lengths() {
         // 5-Q: two blocks of 15 data codewords, then two of 16; 18 EC codewords each.
         let data: Vec<u8> = (0..62).collect();
-        let bytes = to_bytes(&apply_error_correction(&data, QRVersion::try_from(5).unwrap(), ErrorCorrectionLevel::Q));
-        assert_eq!(bytes.len(), capacity::total_codewords(QRVersion::try_from(5).unwrap()));
+        let bytes = to_bytes(&apply_error_correction(&data, 5, ErrorCorrectionLevel::Q));
+        assert_eq!(bytes.len(), capacity::total_codewords(5));
 
         let mut expected_data: Vec<u8> = (0..15).flat_map(|i| [i, 15 + i, 30 + i, 46 + i]).collect();
         expected_data.extend([45, 61]);
@@ -645,9 +660,9 @@ mod tests {
     fn error_correction_fills_every_codeword_of_every_version() {
         for version in 1..=40u8 {
             for level in [ErrorCorrectionLevel::L, ErrorCorrectionLevel::M, ErrorCorrectionLevel::Q, ErrorCorrectionLevel::H] {
-                let codewords = apply_formatting(BitVec::new(), QRVersion::try_from(version).unwrap(), level);
-                let bits = apply_error_correction(&codewords, QRVersion::try_from(version).unwrap(), level);
-                assert_eq!(bits.len(), capacity::total_codewords(QRVersion::try_from(version).unwrap()) * 8, "version {version} {level:?}");
+                let codewords = apply_formatting(BitVec::new(), version, level);
+                let bits = apply_error_correction(&codewords, version, level);
+                assert_eq!(bits.len(), capacity::total_codewords(version) * 8, "version {version} {level:?}");
             }
         }
     }
@@ -655,7 +670,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "data codewords must fill the version exactly")]
     fn error_correction_rejects_unformatted_data() {
-        apply_error_correction(&[0x10, 0x20], QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        apply_error_correction(&[0x10, 0x20], 1, ErrorCorrectionLevel::M);
     }
 
     #[test]

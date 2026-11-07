@@ -18,18 +18,15 @@ futures = "0.3.33"
 rand = "0.10.2"
 argon2 = {version = "0.6.0", features = ["rand_core"]}
 bitvec = "1.1.1"
+percent-encoding = "2.3.2"
 encoding_rs = { version = "0.8.44", features = ["fast-kanji-encode"] }
 tracing = "0.1.44"
 tracing-subscriber = {version = "0.3.23", features = ["std", "env-filter"] }
 tower = "0.5.3"
-tower-http = { version = "0.7.1", features = ["fs", "trace"] }
+tower-http = { version = "0.7.1", features = ["compression-gzip", "fs", "trace"] }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
-
-[[bench]]
-name = "penalty_score_bench"
-harness = false
 
 [[bench]]
 name = "segmenter_bench"

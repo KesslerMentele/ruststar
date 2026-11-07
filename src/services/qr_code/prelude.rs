@@ -5,6 +5,6 @@
 pub(crate) use super::{
     create_qr_code, EncodedData, EncodingMode, 
     ErrorCorrectionLevel,
-    QRCreationError, QRVersion, QRVersionError, VersionChoice, QRData
+    QRCreationError, QRVersion, QRVersionError, QRData
 };
 pub(crate) use super::structure::QRMatrix;

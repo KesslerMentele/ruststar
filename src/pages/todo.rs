@@ -14,9 +14,7 @@ use crate::services::{CreateTodo, SqliteError, Todo};
 
 async fn index_create(State(state): State<Arc<AppState>>, Json(signals): Json<CreateSignals>, ) -> Result<impl IntoResponse, SqliteError> {
     let service = state.selected_todo_backend.read().await.clone();
-    println!("POST /todos - creating todo with title={:?}", signals.title);
     let new_todo = service.create(CreateTodo { title: signals.title }).await?;
-    println!("POST /todos - created todo id={}", new_todo.id);
     let todos = service.list().await?;
     let remaining = todos.iter().filter(|t| !t.completed).count();
 
@@ -29,9 +27,7 @@ async fn index_create(State(state): State<Arc<AppState>>, Json(signals): Json<Cr
 }
 async fn index_complete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, ) -> Result<impl IntoResponse, SqliteError> {
     let service = state.selected_todo_backend.read().await.clone();
-    println!("POST /todos/{id}/complete - completing todo");
     let todo = service.complete(id).await?;
-    println!("POST /todos/{id}/complete - completed todo");
     let todos = service.list().await?;
     let remaining = todos.iter().filter(|t| !t.completed).count();
     Ok(sse_response(vec![
@@ -41,9 +37,7 @@ async fn index_complete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>
 }
 async fn index_delete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, ) -> Result<impl IntoResponse, SqliteError> {
     let service = state.selected_todo_backend.read().await.clone();
-    println!("POST /todos/{id}/delete - deleting todo");
     service.delete(id).await?;
-    println!("POST /todos/{id}/delete - deleted todo");
     let todos = service.list().await?;
     let remaining = todos.iter().filter(|t| !t.completed).count();
     Ok(sse_response(vec![
@@ -53,16 +47,12 @@ async fn index_delete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, 
 }
 async fn detail_get(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, ) -> Result<Markup, SqliteError> {
     let service = state.selected_todo_backend.read().await.clone();
-    println!("GET /todos/{id} - fetching todo detail");
     let todo = service.get(id).await?;
-    println!("GET /todos/{id} - found todo");
     Ok(todo_page(&todo))
 }
 async fn detail_complete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, ) -> Result<impl IntoResponse, SqliteError> {
     let service = state.selected_todo_backend.read().await.clone();
-    println!("POST /todos/{id}/detail/complete - completing todo");
     let todo = service.complete(id).await?;
-    println!("POST /todos/{id}/detail/complete - completed todo");
     Ok(sse_response(vec![
         PatchElements::new(todo_detail_content(&todo).into_string())
             .selector("#todo-detail")
@@ -71,9 +61,7 @@ async fn detail_complete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid
 }
 async fn detail_delete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, ) -> Result<impl IntoResponse, SqliteError> {
     let service = state.selected_todo_backend.read().await.clone();
-    println!("POST /todos/{id}/detail/delete - deleting todo");
     service.delete(id).await?;
-    println!("POST /todos/{id}/detail/delete - deleted todo");
     Ok(sse_response(vec![
         ExecuteScript::new("window.location = '/'").into()
     ]))
@@ -129,6 +117,7 @@ fn todo_detail_content(todo: &Todo) -> Markup {
 fn todo_page(todo: &Todo) -> Markup {
     layout(
         &todo.title,
+        "",
         html! {
             link rel="stylesheet" href="/assets/todo.css";
         },

@@ -1,0 +1,219 @@
+/* --- layout --- */
+
+#root > main:has(.qr-layout) {
+    display: flex;
+    margin-top: 0;
+}
+
+#root:has(.qr-layout) {
+    --qr-sidebar-width: 18rem;
+    --qr-divider-width: 2px;
+}
+
+.qr-layout {
+    flex: 1;
+    display: grid;
+    grid-template-columns: var(--qr-sidebar-width) minmax(0, 1fr);
+}
+
+#root:has(.qr-layout) .header {
+    border-bottom: 0;
+}
+
+#root:has(.qr-layout) .header::after {
+    content: "";
+    position: absolute;
+    left: calc(var(--qr-sidebar-width) - var(--qr-divider-width) + 0.01rem);
+    border-top-left-radius: 2px;
+    right: 0;
+    bottom: 0;
+    height: var(--qr-divider-width);
+    background-color: var(--color-foreground);
+}
+
+/* --- sidebar --- */
+
+.sidebar {
+    border-right: var(--qr-divider-width) solid var(--color-foreground);
+    text-align: left;
+}
+
+.sidebar-controls {
+    position: sticky;
+    top: 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1.5rem;
+}
+
+.sidebar-controls label {
+    color: var(--color-muted-foreground);
+    font-size: 0.875rem;
+}
+
+.sidebar-controls .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.sidebar-controls .toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+}
+
+/* --- help tips --- */
+
+.sidebar-controls .field-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.help {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 0.8rem;
+    height: 0.8rem;
+    font-size: 0.625rem;
+    line-height: 1;
+    color: var(--color-link);
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    cursor: help;
+}
+
+.help:hover,
+.help:focus {
+    color: var(--color-surface);
+    background-color: var(--color-foreground);
+    border-color: var(--color-foreground);
+}
+
+
+.help-text {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 2;
+    width: max-content;
+    max-width: 16rem;
+    margin-top: 0.25rem;
+    padding: 0.5rem 0.625rem;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    color: var(--color-muted-foreground);
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-foreground);
+    border-radius: 0.2rem;
+}
+
+.help:hover .help-text,
+.help:focus .help-text {
+    display: block;
+}
+
+.sidebar-controls :is(input[type=text], textarea, select) {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 0.4rem;
+    font: inherit;
+    font-size: 1rem;
+    color: var(--color-muted-foreground);
+    background-color: rgb(255 255 255 / 50%);
+    border: 1px solid var(--color-foreground);
+    border-radius: 0.2rem;
+}
+
+.sidebar-controls textarea {
+    resize: vertical;
+}
+
+
+
+/* --- code --- */
+
+.qr-preview {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 1.5rem 1.5rem 12rem;
+}
+
+#qr-code {
+    --qr-module-size: 5px;
+    width: max(256px, calc(var(--qr-modules) * var(--qr-module-size)));
+    max-width: 100%;
+    height: auto;
+}
+
+/* --- stats --- */
+
+#qr-stats {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 5;
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 0.25rem 1rem;
+    max-width: 20rem;
+    margin: 0;
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-size: 0.875rem;
+    border: 2px solid var(--color-foreground);
+    border-radius: 0.2rem;
+}
+
+#qr-stats dt {
+    color: var(--color-muted-foreground);
+}
+
+#qr-stats dd {
+    margin: 0;
+    color: var(--color-link);
+    overflow-wrap: anywhere;
+}
+
+/* --- narrow screens --- */
+
+@media (max-width: 48rem) {
+    .qr-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    #root:has(.qr-layout) .header::after {
+        display: none;
+    }
+
+    .sidebar {
+        border-right: 0;
+        border-bottom: var(--qr-divider-width) solid var(--color-foreground);
+    }
+
+    .sidebar-controls {
+        position: static;
+    }
+
+    .help-text {
+        max-width: 11rem;
+    }
+
+    .qr-preview {
+        padding-bottom: 1.5rem;
+    }
+
+    #qr-stats {
+        position: static;
+        max-width: none;
+        margin: 0 1.5rem 1.5rem;
+    }
+}

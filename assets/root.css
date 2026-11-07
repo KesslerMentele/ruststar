@@ -65,7 +65,7 @@
 
 /* Colours the overscroll area (past the top/bottom of the page) to match the app */
 html {
-    background-color: var(--color-surface);
+    background-color: var(--color-background);
     overscroll-behavior-y: none;
 }
 
@@ -154,6 +154,7 @@ code {
             linear-gradient(var(--c), var(--c)),
             var(--paper-texture);
     background-blend-mode: normal, multiply;
+    background-attachment: fixed;
 }
 
 /* Buttons are transparent, so this lightens the paper showing through them */

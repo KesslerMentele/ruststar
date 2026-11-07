@@ -3,7 +3,7 @@
 // correction codewords; data codewords are whatever is left, spread as evenly as possible across
 // the blocks.
 
-use super::{ErrorCorrectionLevel, QRVersion};
+use super::ErrorCorrectionLevel;
 
 /// Error correction codewords in each block, indexed by `[level][version - 1]`.
 const ECC_CODEWORDS_PER_BLOCK: [[u8; 40]; 4] = [
@@ -90,8 +90,8 @@ const EC_TABLE: [[(u16, u16, u16, u16, u16, u16); 4]; 40] = [
 /// Modules left for data and error correction once the finder, separator, timing and alignment
 /// patterns, the format information and (from version 7) the version information are removed.
 /// Not always a multiple of 8: the 0, 3, 4 or 7 leftover remainder bits hold no codeword.
-pub(crate) fn raw_data_modules(version: QRVersion) -> usize {
-    let v:usize = version.into();
+pub(crate) fn raw_data_modules(v: usize) -> usize {
+
     let mut modules = (16 * v + 128) * v + 64;
     if v >= 2 {
         let alignment_per_side = v / 7 + 2;
@@ -104,23 +104,23 @@ pub(crate) fn raw_data_modules(version: QRVersion) -> usize {
 }
 
 /// Every codeword in the symbol, data and error correction combined.
-pub(crate) fn total_codewords(version: QRVersion) -> usize {
-    raw_data_modules(version) / 8
+pub(crate) fn total_codewords(version: u8) -> usize {
+    raw_data_modules(version.into()) / 8
 }
 
-pub(crate) fn ecc_codewords_per_block(version: QRVersion, level: ErrorCorrectionLevel) -> usize {
+pub(crate) fn ecc_codewords_per_block(version: u8, level: ErrorCorrectionLevel) -> usize {
     let v:usize = version.into();
     ECC_CODEWORDS_PER_BLOCK[level as usize][v - 1] as usize
 }
 
-pub(crate) fn error_correction_blocks(version: QRVersion, level: ErrorCorrectionLevel) -> usize {
+pub(crate) fn error_correction_blocks(version: u8, level: ErrorCorrectionLevel) -> usize {
     let v:usize = version.into();
     ERROR_CORRECTION_BLOCKS[level as usize][v - 1] as usize
 }
 
-/// Retrieves the error correction information for a given `QRVersion` and `ErrorCorrectionLevel`.
+/// Retrieves the error correction information for a given version and `ErrorCorrectionLevel`.
 /// Returns an `EcBlockInfo`.
-pub(crate) fn ec_block_info(version: QRVersion, level: ErrorCorrectionLevel) -> EcBlockInfo {
+pub(crate) fn ec_block_info(version: u8, level: ErrorCorrectionLevel) -> EcBlockInfo {
     let v:usize = version.into();
     let (total_data_codewords, ec_codewords_per_block, group_1_blocks, group_1_data_codewords,
         group_2_blocks, group_2_data_codewords) = EC_TABLE[v - 1][level as usize];
@@ -135,7 +135,7 @@ pub(crate) fn ec_block_info(version: QRVersion, level: ErrorCorrectionLevel) -> 
 }
 
 /// Codewords available for data (segments, terminator and padding) at this version and level.
-pub(crate) fn data_codewords(version: QRVersion, level: ErrorCorrectionLevel) -> usize {
+pub(crate) fn data_codewords(version: u8, level: ErrorCorrectionLevel) -> usize {
     total_codewords(version)
         - ecc_codewords_per_block(version, level) * error_correction_blocks(version, level)
 }
@@ -147,24 +147,24 @@ mod tests {
 
     #[test]
     fn total_codewords_match_the_smallest_and_largest_symbols() {
-        assert_eq!(total_codewords(QRVersion { version:1 }), 26);
-        assert_eq!(total_codewords(QRVersion { version:7}), 196);
-        assert_eq!(total_codewords(QRVersion { version:40}), 3706);
+        assert_eq!(total_codewords(1), 26);
+        assert_eq!(total_codewords(7), 196);
+        assert_eq!(total_codewords(40), 3706);
     }
 
     #[test]
     fn version_1_data_codewords() {
-        assert_eq!([L, M, Q, H].map(|level| data_codewords(QRVersion { version:1 }, level)), [19, 16, 13, 9]);
+        assert_eq!([L, M, Q, H].map(|level| data_codewords(1, level)), [19, 16, 13, 9]);
     }
 
     #[test]
     fn version_40_data_codewords() {
-        assert_eq!([L, M, Q, H].map(|level| data_codewords(QRVersion { version:40}, level)), [2956, 2334, 1666, 1276]);
+        assert_eq!([L, M, Q, H].map(|level| data_codewords(40, level)), [2956, 2334, 1666, 1276]);
     }
 
     #[test]
     fn version_5_q_splits_unevenly_across_blocks() {
         // 2 blocks of 15 data codewords and 2 of 16.
-        assert_eq!(data_codewords(QRVersion { version:5}, Q), 62);
+        assert_eq!(data_codewords(5, Q), 62);
     }
 }

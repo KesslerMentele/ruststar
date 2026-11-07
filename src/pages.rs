@@ -5,7 +5,7 @@ pub(crate) mod qr_generator;
 
 use maud::{html, Markup, DOCTYPE};
 
-pub fn layout(title: &str, head:Markup, content: Markup) -> Markup {
+pub fn layout(title: &str, sub:&str, head:Markup, content: Markup) -> Markup {
     html! {
         (DOCTYPE)
         html {
@@ -18,7 +18,7 @@ pub fn layout(title: &str, head:Markup, content: Markup) -> Markup {
                 script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.2/bundles/datastar.js" {}
             }
             body id="root" {
-                (header())
+                (header(title, sub))
                 main class="content-container" {
                     (content)
                 }
@@ -27,13 +27,13 @@ pub fn layout(title: &str, head:Markup, content: Markup) -> Markup {
     }
 }
 
-fn header() -> Markup {
+fn header(title: &str, sub:&str) -> Markup {
     html! {
         nav class="header papered" {
             (home_button())
             header {
-                    h1 { "Kessler Mentele" }
-                    p id="tagline" { "Backend-leaning developer." }
+                    h1 { (title) }
+                    p id="tagline" { (sub) }
                 }
             div class="header-links" {
 

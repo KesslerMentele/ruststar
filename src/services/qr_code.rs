@@ -1,5 +1,5 @@
 use bitvec::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use crate::services::qr_code::{
     bits::bytes_to_bits,
     blocks::interleave,
@@ -26,39 +26,22 @@ pub enum QRVersionError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-pub struct QRVersion {
-    version: u8,
+pub enum QRVersion {
+    Auto,
+    #[serde(untagged)]
+    Exact(#[serde(deserialize_with = "u8_from_str")] u8),
 }
 
 impl TryFrom<u8> for QRVersion {
     type Error = QRVersionError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        if value >= 1 && value <= 40 {Ok(QRVersion{version:value})} else {Err(QRVersionError::OutOfBounds(value)) }
-    }
-}
-impl Into<u8> for QRVersion {
-    fn into(self) -> u8 {
-        self.version
-    }
-}
-impl Into<usize> for QRVersion {
-    fn into(self) -> usize {
-        self.version as usize
+        if value >= 1 && value <= 40 {Ok(QRVersion::Exact(value))} else {Err(QRVersionError::OutOfBounds(value)) }
     }
 }
 
 
-/// How the caller wants the version chosen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VersionChoice {
-    /// Use exactly this version, failing if the data doesn't fit.
-    Fixed(QRVersion),
-    /// Use the smallest version that fits the optimally segmented data.
-    Auto,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 pub enum EncodingMode {
     Numeric,
     Alphanumeric,
@@ -67,7 +50,7 @@ pub enum EncodingMode {
     ECI,
     FNC1,
     SA,
-    AutoDetect,
+    Auto,
     Segmented
 }
 impl From<SegmentMode> for EncodingMode {
@@ -81,7 +64,7 @@ impl From<SegmentMode> for EncodingMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum ErrorCorrectionLevel {
     L,
     M,
@@ -113,52 +96,96 @@ impl From<EncodeError> for QRCreationError {
 /// were sized for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EncodedData {
-    pub(crate) version: QRVersion,
+    pub(crate) version: u8,
     pub(crate) bits: BitVec<u8, Lsb0>,
+    /// Where each segment landed in `bits`, in order.
+    pub(crate) segments: Vec<SegmentStats>,
+}
+
+/// Where one segment sits in the encoded data, as bit offsets from the start of the data stream.
+/// These are offsets before interleaving, so with more than one error correction block a segment's
+/// bits aren't contiguous in the finished symbol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub(crate) struct SegmentStats {
+    pub(crate) mode: SegmentMode,
+    /// The first bit of the segment's header.
+    pub(crate) start_bit: usize,
+    /// One past the segment's last bit, which is where the next segment starts.
+    pub(crate) end_bit: usize,
+    /// The mode indicator and character count: the segment's data starts at `start_bit + header_bits`.
+    pub(crate) header_bits: usize,
+}
+
+/// What was actually used to build a code, with every `Auto` setting resolved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct QRStats {
+    pub(crate) version: u8,
+    pub(crate) error_correction_level: ErrorCorrectionLevel,
+    pub(crate) mask: u8,
+    /// The mode of every segment, in order.
+    pub(crate) encoding_modes: Vec<SegmentMode>,
+    pub(crate) segments: Vec<SegmentStats>,
+}
+
+#[derive(Debug)]
+pub(crate) struct QRCode {
+    pub(crate) matrix: QRMatrix,
+    pub(crate) stats: QRStats,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) enum MaskSetting {
-    Exact(u8),
-    ChooseBest
+    Auto,
+    #[serde(untagged)]
+    Exact(#[serde(deserialize_with = "u8_from_str")] u8),
+
 }
 
 #[derive(Deserialize)]
 pub struct QRData {
-    data: String,
+    text: String,
     error_correction_level: ErrorCorrectionLevel,
     encoding_mode: EncodingMode,
     version: QRVersion,
     mask: MaskSetting
 }
 
-fn create_qr_code_bits(
-    data: &str,
-    error_correction_level:ErrorCorrectionLevel,
-    encoding_mode: Option<EncodingMode>,
-    version:Option<QRVersion>,
-) -> Result<EncodedData, QRCreationError> {
-    let version_choice = match version {
-        Some(version) => VersionChoice::Fixed(version),
-        None => VersionChoice::Auto
-    };
-    let mode = match encoding_mode {
-        Some(EncodingMode::Segmented) => {
-            let segment_plan = segment(data, version_choice, error_correction_level)?;
-            let version = segment_plan.version;
-            let bits = encode_data_by_encoding_plan(data, segment_plan)?;
-            return Ok(EncodedData { version, bits });
+impl QRData {
+    fn new(data: &str, error_correction_level: ErrorCorrectionLevel, encoding_mode: EncodingMode, version: QRVersion, mask: MaskSetting) -> QRData {
+        QRData {
+            text: data.to_string(),
+            error_correction_level,
+            encoding_mode,
+            version,
+            mask
         }
-        Some(EncodingMode::AutoDetect) | None => best_single_mode(data),
-        Some(EncodingMode::Numeric) => SegmentMode::Numeric,
-        Some(EncodingMode::Alphanumeric) => SegmentMode::Alphanumeric,
-        Some(EncodingMode::Byte) => SegmentMode::Byte,
-        Some(EncodingMode::Kanji) => SegmentMode::Kanji,
-        Some(mode @ (EncodingMode::ECI | EncodingMode::FNC1 | EncodingMode::SA)) => {
+    }
+}
+
+
+fn u8_from_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u8, D::Error> {
+    String::deserialize(d)?.parse().map_err(serde::de::Error::custom)
+}
+
+fn create_qr_code_bits(
+    data: &QRData
+) -> Result<EncodedData, QRCreationError> {
+    
+    let mode = match data.encoding_mode {
+        EncodingMode::Segmented => {
+            let segment_plan = segment(&*data.text, data.version, data.error_correction_level)?;
+            return Ok(encode_data_by_encoding_plan(&*data.text, segment_plan)?);
+        }
+        EncodingMode::Auto => best_single_mode(&*data.text),
+        EncodingMode::Numeric => SegmentMode::Numeric,
+        EncodingMode::Alphanumeric => SegmentMode::Alphanumeric,
+        EncodingMode::Byte => SegmentMode::Byte,
+        EncodingMode::Kanji => SegmentMode::Kanji,
+        mode @ (EncodingMode::ECI | EncodingMode::FNC1 | EncodingMode::SA) => {
             return Err(QRCreationError::NotImplemented(mode));
         }
     };
-    encode_single_segment(data, mode, version_choice, error_correction_level)
+    encode_single_segment(&*data.text, mode, data.version, data.error_correction_level)
 }
 
 fn create_error_corrected_data(encoded_data: EncodedData, error_correction_level:ErrorCorrectionLevel) -> BitVec<u8> {
@@ -172,16 +199,21 @@ fn create_error_corrected_data(encoded_data: EncodedData, error_correction_level
         encoded_data.version, error_correction_level)
 }
 
-pub(crate) fn create_qr_code(data:QRData) -> Result<QRMatrix, QRCreationError> {
-    let encoded_data = create_qr_code_bits(&*data.data, data.error_correction_level, Option::from(data.encoding_mode), Option::from(data.version))?;
-    let mut structure = QRMatrix::new(encoded_data.version, data.error_correction_level);
+pub(crate) fn create_qr_code(data:QRData) -> Result<QRCode, QRCreationError> {
+    let encoded_data = create_qr_code_bits(&data)?;
+    let segments = encoded_data.segments.clone();
+    let mut matrix = QRMatrix::new(encoded_data.version, data.error_correction_level);
     let error_corrected_data = create_error_corrected_data(encoded_data, data.error_correction_level);
-    structure.place_data(&error_corrected_data);
-    match structure.set_mask(data.mask) {
-        Ok(()) => Ok(structure),
-        Err(mask_error) => Err(QRCreationError::MaskingFailed(mask_error))
-    }
-
+    matrix.place_data(&error_corrected_data);
+    matrix.set_mask(data.mask).map_err(QRCreationError::MaskingFailed)?;
+    let stats = QRStats {
+        version: matrix.version(),
+        error_correction_level: data.error_correction_level,
+        mask: matrix.mask().expect("set_mask succeeded, so a mask is set"),
+        encoding_modes: segments.iter().map(|segment| segment.mode).collect(),
+        segments,
+    };
+    Ok(QRCode { matrix, stats })
 }
 
 #[cfg(test)]
@@ -189,9 +221,7 @@ mod tests {
     use super::*;
     use super::bits::write_bits;
 
-    fn v(version: u8) -> QRVersion {
-        QRVersion { version }
-    }
+    fn v(version: u8) ->  QRVersion { QRVersion::Exact(version) }
 
     /// Builds an expected bitstream from `(value, bit_length)` fields, in order.
     fn fields(fields: &[(u32, usize)]) -> BitVec<u8, Lsb0> {
@@ -206,7 +236,7 @@ mod tests {
     fn segmented_single_mode_matches_the_iso_18004_example() {
         // ISO/IEC 18004 Annex I: "01234567" at 1-M is mode 0001, count 8 in 10 bits, then data.
         let expected = fields(&[(0b0001, 4), (8, 10), (12, 10), (345, 10), (67, 7)]);
-        let bits = create_qr_code_bits("01234567", ErrorCorrectionLevel::M, Some(EncodingMode::Segmented), Some(v(1))).unwrap().bits;
+        let bits = create_qr_code_bits(&QRData::new("01234567", ErrorCorrectionLevel::M, EncodingMode::Segmented, v(1), MaskSetting::Auto)).unwrap().bits;
         assert_eq!(bits, expected);
     }
 
@@ -217,15 +247,15 @@ mod tests {
             (0b0100, 4), (1, 8), (b'a' as u32, 8),
             (0b0001, 4), (7, 10), (123, 10), (456, 10), (7, 4),
         ]);
-        let bits = create_qr_code_bits("a1234567", ErrorCorrectionLevel::L, Some(EncodingMode::Segmented), None).unwrap().bits;
+        let bits = create_qr_code_bits(&QRData::new("a1234567", ErrorCorrectionLevel::L, EncodingMode::Segmented, QRVersion::Auto, MaskSetting::Auto)).unwrap().bits;
         assert_eq!(bits, expected);
     }
 
     #[test]
     fn segmented_length_matches_the_segment_plan() {
         for data in ["01234567", "a1234567", "AB1234567", "é1234567", "点点abc", "HELLO WORLD 123"] {
-            let plan = segment(data, VersionChoice::Auto, ErrorCorrectionLevel::M).unwrap();
-            let bits = create_qr_code_bits(data, ErrorCorrectionLevel::M, Some(EncodingMode::Segmented), None).unwrap().bits;
+            let plan = segment(data, QRVersion::Auto, ErrorCorrectionLevel::M).unwrap();
+            let bits = create_qr_code_bits(&QRData::new(data, ErrorCorrectionLevel::M, EncodingMode::Segmented, QRVersion::Auto, MaskSetting::Auto )).unwrap().bits;
             assert_eq!(bits.len(), plan.data_bits_length, "length mismatch for {data:?}");
         }
     }
@@ -234,13 +264,13 @@ mod tests {
     fn segmented_count_indicator_widens_with_the_version() {
         // Byte's count indicator is 8 bits up to version 9, 16 bits from version 10.
         let expected = fields(&[(0b0100, 4), (2, 16), (b'a' as u32, 8), (b'b' as u32, 8)]);
-        let bits = create_qr_code_bits("ab", ErrorCorrectionLevel::L, Some(EncodingMode::Segmented), Some(v(10))).unwrap().bits;
+        let bits = create_qr_code_bits(&QRData::new("ab", ErrorCorrectionLevel::L, EncodingMode::Segmented, v(10), MaskSetting::Auto)).unwrap().bits;
         assert_eq!(bits, expected);
     }
 
     #[test]
     fn segmented_rejects_data_that_does_not_fit_a_fixed_version() {
-        let result = create_qr_code_bits(&"a".repeat(20), ErrorCorrectionLevel::L, Some(EncodingMode::Segmented), Some(v(1)));
+        let result = create_qr_code_bits(&QRData::new(&"a".repeat(20), ErrorCorrectionLevel::L, EncodingMode::Segmented, v(1), MaskSetting::Auto));
         assert!(matches!(result, Err(QRCreationError::NotSegmentable(SegmentError::ExceedsVersionCapacity { .. }))));
     }
 
@@ -248,22 +278,15 @@ mod tests {
     fn auto_detect_matches_the_iso_18004_alphanumeric_example() {
         // ISO/IEC 18004 Annex I: "AC-42" is mode 0010, count 5 in 9 bits, then data.
         let expected = fields(&[(0b0010, 4), (5, 9), (10 * 45 + 12, 11), (41 * 45 + 4, 11), (2, 6)]);
-        let bits = create_qr_code_bits("AC-42", ErrorCorrectionLevel::M, Some(EncodingMode::AutoDetect), None).unwrap().bits;
+        let bits = create_qr_code_bits(&QRData::new("AC-42", ErrorCorrectionLevel::M, EncodingMode::Auto, QRVersion::Auto, MaskSetting::Auto)).unwrap().bits;
         assert_eq!(bits, expected);
-    }
-
-    #[test]
-    fn no_mode_behaves_like_auto_detect() {
-        let auto = create_qr_code_bits("AC-42", ErrorCorrectionLevel::M, Some(EncodingMode::AutoDetect), None).unwrap().bits;
-        let none = create_qr_code_bits("AC-42", ErrorCorrectionLevel::M, None, None).unwrap().bits;
-        assert_eq!(auto, none);
     }
 
     #[test]
     fn kanji_count_indicator_counts_chars_not_bytes() {
         // 点 is 3 UTF-8 bytes, but the count is 1 char. Data is 0x935F reduced to 0x0D9F.
         let expected = fields(&[(0b1000, 4), (1, 8), (0x0D9F, 13)]);
-        let bits = create_qr_code_bits("点", ErrorCorrectionLevel::M, Some(EncodingMode::Kanji), None).unwrap().bits;
+        let bits = create_qr_code_bits(&QRData::new("点", ErrorCorrectionLevel::M, EncodingMode::Kanji, QRVersion::Auto, MaskSetting::Auto)).unwrap().bits;
         assert_eq!(bits, expected);
     }
 
@@ -271,48 +294,144 @@ mod tests {
     fn byte_count_indicator_counts_utf8_bytes() {
         // é is 2 UTF-8 bytes: 0xC3 0xA9.
         let expected = fields(&[(0b0100, 4), (2, 8), (0xC3, 8), (0xA9, 8)]);
-        let bits = create_qr_code_bits("é", ErrorCorrectionLevel::M, Some(EncodingMode::Byte), None).unwrap().bits;
+        let bits = create_qr_code_bits(&QRData::new("é", ErrorCorrectionLevel::M, EncodingMode::Byte, QRVersion::Auto, MaskSetting::Auto)).unwrap().bits;
         assert_eq!(bits, expected);
     }
 
     #[test]
     fn fixed_mode_rejects_data_that_does_not_fit_a_fixed_version() {
-        let result = create_qr_code_bits(&"a".repeat(20), ErrorCorrectionLevel::L, Some(EncodingMode::Byte), Some(v(1)));
+        let result = create_qr_code_bits(&QRData::new(&"a".repeat(20), ErrorCorrectionLevel::L, EncodingMode::Byte, v(1), MaskSetting::Auto));
         assert!(result.is_err(), "20 bytes needs 172 bits but 1-L only holds 152");
     }
 
     #[test]
     fn auto_detect_widens_the_count_in_a_larger_version_group() {
         // 300 bytes overflows every Small version at L, so the count indicator is 16 bits.
-        let bits = create_qr_code_bits(&"a".repeat(300), ErrorCorrectionLevel::L, None, None).unwrap().bits;
+        let bits = create_qr_code_bits(&QRData::new(&"a".repeat(300), ErrorCorrectionLevel::L, EncodingMode::Auto, QRVersion::Auto, MaskSetting::Auto)).unwrap().bits;
         assert_eq!(bits.len(), 4 + 16 + 300 * 8);
         assert_eq!(bits[..20], fields(&[(0b0100, 4), (300, 16)])[..]);
     }
 
     #[test]
     fn auto_detect_rejects_data_too_long_for_version_40() {
-        let result = create_qr_code_bits(&"a".repeat(3000), ErrorCorrectionLevel::L, None, None);
+        let result = create_qr_code_bits(&QRData::new(&"a".repeat(3000), ErrorCorrectionLevel::L, EncodingMode::Auto, QRVersion::Auto, MaskSetting::Auto));
         assert!(matches!(result, Err(QRCreationError::NotSegmentable(SegmentError::TooLong { needed_bits: 24020 }))));
     }
 
     #[test]
     fn fixed_mode_rejects_chars_outside_its_set() {
-        let result = create_qr_code_bits("12a", ErrorCorrectionLevel::M, Some(EncodingMode::Numeric), None);
+        let result = create_qr_code_bits(&QRData::new("12a", ErrorCorrectionLevel::M, EncodingMode::Numeric, QRVersion::Auto, MaskSetting::Auto));
         assert!(matches!(result, Err(QRCreationError::EncodingFailed(EncodeError::InvalidChar('a')))));
     }
 
     #[test]
     fn prefix_modes_are_not_implemented() {
         for mode in [EncodingMode::ECI, EncodingMode::FNC1, EncodingMode::SA] {
-            let result = create_qr_code_bits("1", ErrorCorrectionLevel::M, Some(mode), None);
+            let result = create_qr_code_bits(&QRData::new("1", ErrorCorrectionLevel::M, mode, QRVersion::Auto, MaskSetting::Auto));
             assert!(matches!(result, Err(QRCreationError::NotImplemented(_))));
         }
     }
 
     #[test]
     fn segmented_empty_input_is_empty() {
-        let bits = create_qr_code_bits("", ErrorCorrectionLevel::M, Some(EncodingMode::Segmented), None).unwrap().bits;
+        let bits = create_qr_code_bits(&QRData::new("", ErrorCorrectionLevel::M, EncodingMode::Segmented, QRVersion::Auto, MaskSetting::Auto)).unwrap().bits;
         assert!(bits.is_empty());
+    }
+
+    fn stats(text: &str, encoding_mode: EncodingMode, mask: MaskSetting) -> QRStats {
+        create_qr_code(QRData::new(text, ErrorCorrectionLevel::Q, encoding_mode, QRVersion::Auto, mask)).unwrap().stats
+    }
+
+    #[test]
+    fn stats_report_the_version_and_level_used() {
+        let long = stats(&"a".repeat(300), EncodingMode::Byte, MaskSetting::Auto);
+        assert_eq!(long.error_correction_level, ErrorCorrectionLevel::Q);
+        assert!(long.version >= 10, "300 bytes can't fit a small version, got {}", long.version);
+    }
+
+    #[test]
+    fn stats_resolve_auto_to_the_mode_used() {
+        let result = stats("HELLO", EncodingMode::Auto, MaskSetting::Auto);
+        assert_eq!(result.encoding_modes, [SegmentMode::Alphanumeric]);
+    }
+
+    #[test]
+    fn stats_list_every_segment_in_order() {
+        let result = stats("a1234567", EncodingMode::Segmented, MaskSetting::Auto);
+        assert_eq!(result.encoding_modes, [SegmentMode::Byte, SegmentMode::Numeric]);
+    }
+
+    #[test]
+    fn stats_locate_a_single_segment() {
+        // "HELLO" at version 1: 4 + 9 header bits, then 11 + 11 + 6 data bits.
+        let result = stats("HELLO", EncodingMode::Auto, MaskSetting::Auto);
+        assert_eq!(result.segments, [
+            SegmentStats { mode: SegmentMode::Alphanumeric, start_bit: 0, end_bit: 41, header_bits: 13 },
+        ]);
+    }
+
+    #[test]
+    fn stats_locate_every_segment_of_a_segmented_code() {
+        // Byte "a" is 12 + 8 bits, then Numeric "1234567" is 14 + 24 bits.
+        let result = stats("a1234567", EncodingMode::Segmented, MaskSetting::Auto);
+        assert_eq!(result.segments, [
+            SegmentStats { mode: SegmentMode::Byte, start_bit: 0, end_bit: 20, header_bits: 12 },
+            SegmentStats { mode: SegmentMode::Numeric, start_bit: 20, end_bit: 58, header_bits: 14 },
+        ]);
+    }
+
+    #[test]
+    fn segment_header_length_widens_with_the_version() {
+        // Byte's count indicator is 16 bits from version 10.
+        let data = QRData::new("ab", ErrorCorrectionLevel::L, EncodingMode::Segmented, v(10), MaskSetting::Auto);
+        let segments = create_qr_code_bits(&data).unwrap().segments;
+        assert_eq!(segments, [
+            SegmentStats { mode: SegmentMode::Byte, start_bit: 0, end_bit: 36, header_bits: 20 },
+        ]);
+    }
+
+    #[test]
+    fn segments_cover_the_encoded_bits_end_to_end() {
+        for text in ["01234567", "a1234567", "AB1234567", "é1234567", "点点abc", "HELLO WORLD 123"] {
+            let data = QRData::new(text, ErrorCorrectionLevel::M, EncodingMode::Segmented, QRVersion::Auto, MaskSetting::Auto);
+            let encoded = create_qr_code_bits(&data).unwrap();
+
+            let mut position = 0;
+            for segment in &encoded.segments {
+                assert_eq!(segment.start_bit, position, "gap before a segment of {text:?}");
+                assert!(segment.header_bits < segment.end_bit - segment.start_bit, "{text:?} has a segment with no data");
+                position = segment.end_bit;
+            }
+            assert_eq!(position, encoded.bits.len(), "segments of {text:?} don't reach the end");
+        }
+    }
+
+    #[test]
+    fn segment_offsets_point_at_each_segments_mode_indicator() {
+        let data = QRData::new("a1234567", ErrorCorrectionLevel::L, EncodingMode::Segmented, QRVersion::Auto, MaskSetting::Auto);
+        let encoded = create_qr_code_bits(&data).unwrap();
+        let indicators: Vec<&BitSlice<u8, Lsb0>> = encoded.segments.iter()
+            .map(|segment| &encoded.bits[segment.start_bit..segment.start_bit + 4])
+            .collect();
+        assert_eq!(indicators[0], fields(&[(0b0100, 4)]).as_bitslice());
+        assert_eq!(indicators[1], fields(&[(0b0001, 4)]).as_bitslice());
+    }
+
+    #[test]
+    fn empty_segmented_text_has_no_segments() {
+        assert!(stats("", EncodingMode::Segmented, MaskSetting::Auto).segments.is_empty());
+    }
+
+    #[test]
+    fn stats_report_the_requested_mask() {
+        assert_eq!(stats("HELLO", EncodingMode::Auto, MaskSetting::Exact(3)).mask, 3);
+    }
+
+    #[test]
+    fn stats_report_the_mask_auto_applied() {
+        let code = create_qr_code(QRData::new("HELLO", ErrorCorrectionLevel::Q, EncodingMode::Auto, QRVersion::Auto, MaskSetting::Auto)).unwrap();
+        assert_eq!(Some(code.stats.mask), code.matrix.mask());
+        assert!(code.stats.mask < 8);
     }
 
     #[test]
@@ -328,9 +447,10 @@ mod tests {
             ("点点abc", ErrorCorrectionLevel::H),
             ("é1234567", ErrorCorrectionLevel::M),
             ("", ErrorCorrectionLevel::M),
+            ("line one\nline two", ErrorCorrectionLevel::M),
         ];
         for (original_string, level) in cases {
-            let matrix = create_qr_code(QRData { data: original_string.parse().unwrap(), error_correction_level: level, encoding_mode: EncodingMode::AutoDetect, version: QRVersion {version: 1}, mask: MaskSetting::ChooseBest }).unwrap();
+            let matrix = create_qr_code(QRData { text: original_string.parse().unwrap(), error_correction_level: level, encoding_mode: EncodingMode::Auto, version: QRVersion::Auto, mask: MaskSetting::Auto }).unwrap().matrix;
             let decoded_string = decode_modules(matrix.modules())
                 .unwrap_or_else(|e| panic!("decode failed for {original_string:?} at {level:?}: {e:?}"));
 

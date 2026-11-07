@@ -66,7 +66,8 @@ async fn live_clock() -> Sse<impl futures::Stream<Item = Result<Event, Infallibl
 
 fn portfolio_page(backend_name: &str, clock: &str, todos: &[Todo]) -> Markup {
     layout(
-        "Home",
+        "Kessler Mentele",
+        "Backend-leaning Developer",
         html! {
             link rel="stylesheet" href="/assets/portfolio.css";
             link rel="stylesheet" href="/assets/todo.css";
@@ -100,7 +101,7 @@ fn portfolio_page(backend_name: &str, clock: &str, todos: &[Todo]) -> Markup {
                     Option::from("Some more SSE-driven creations"),
                     html!{p {
                         a href="/toys/pages" { "Toys" }
-                        a href="/toys/pages" { "Toys" }
+                        a href="/qr/generator" { "QR Code Generator" }
                     }}
                 ))
                 

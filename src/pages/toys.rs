@@ -85,6 +85,7 @@ async fn game_get(Path(slug): Path<String>) -> Result<impl IntoResponse, SqliteE
 fn games_page() -> Markup {
 
     layout("Toys",
+           "",
            html! {
                link rel="stylesheet" href="/assets/toys.css";
            },

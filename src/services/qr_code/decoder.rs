@@ -7,7 +7,7 @@ use crate::services::qr_code::blocks::deinterleave;
 use crate::services::qr_code::capacity::{ec_block_info, total_codewords};
 use crate::services::qr_code::encoder::alphanumeric_char;
 use crate::services::qr_code::gf_math::{correct_block, error_correction_codewords, EcLength};
-use crate::services::qr_code::{ErrorCorrectionLevel, QRVersion};
+use crate::services::qr_code::ErrorCorrectionLevel;
 use crate::services::qr_code::segmenter::{SegmentMode, VersionGroup};
 use crate::services::qr_code::structure::{bch_format_information, data_module_positions, format_information_positions, mask_predicate};
 
@@ -134,9 +134,9 @@ fn decode_kanji(reader: &mut BitReader, group: VersionGroup, output: &mut String
 /// Decodes `data_codewords` that have already been stripped of ec, terminator and padding
 /// back into the original string. Stops at the terminator (a `0000` mode indicator) or once
 /// fewer than 4 bits remain, whichever comes first.
-pub(crate) fn decode_segments(data_codewords: &[u8], version: QRVersion) -> Result<String, DecodeError> {
+pub(crate) fn decode_segments(data_codewords: &[u8], version: u8) -> Result<String, DecodeError> {
     let bits = bytes_to_bits(data_codewords);
-    let group = VersionGroup::of(QRVersion::try_from(version).unwrap());
+    let group = VersionGroup::of(version);
     let mut reader = BitReader::new(&bits);
     let mut output = String::new();
 
@@ -154,11 +154,10 @@ pub(crate) fn decode_segments(data_codewords: &[u8], version: QRVersion) -> Resu
 }
 
 /// The version whose symbol has exactly `module_count` modules, and that symbol's width.
-fn version_and_size(module_count: usize) -> Result<(QRVersion, usize), DecodeError> {
+fn version_and_size(module_count: usize) -> Result<(u8, usize), DecodeError> {
     (1..=40u8)
         .map(|version| (version, version as usize * 4 + 17))
         .find(|&(_, size)| size * size == module_count)
-        .map(|(version, size)| (QRVersion::try_from(version).expect("1..=40 are all valid versions"), size))
         .ok_or(DecodeError::InvalidModuleCount(module_count))
 }
 
@@ -224,11 +223,11 @@ pub(crate) fn decode_modules(modules: &BitSlice<u8, Lsb0>) -> Result<String, Dec
 mod tests {
     use super::*;
     use crate::services::qr_code::capacity::data_codewords;
-    use crate::services::qr_code::{create_qr_code, EncodingMode, MaskSetting};
+    use crate::services::qr_code::{create_qr_code, EncodingMode, MaskSetting, QRData, QRVersion};
 
     /// What a reader would hand over for `data` at 1-M under `mask`: bits and nothing else.
     fn scanned(data: &str, mask: u8) -> BitVec<u8, Lsb0> {
-        let matrix = create_qr_code(data, ErrorCorrectionLevel::M, None, None, Some(MaskSetting::Exact(mask))).unwrap();
+        let matrix = create_qr_code(QRData { text: data.parse().unwrap(), error_correction_level: ErrorCorrectionLevel::M, encoding_mode: EncodingMode::Auto, version: QRVersion::Auto, mask: MaskSetting::Exact(mask)}).unwrap().matrix;
         matrix.modules().to_bitvec()
     }
 
@@ -249,7 +248,7 @@ mod tests {
     fn decode_modules_reads_every_level_from_the_format_information() {
         use ErrorCorrectionLevel::*;
         for level in [L, M, Q, H] {
-            let matrix = create_qr_code("HELLO", level, None, None, None).unwrap();
+            let matrix = create_qr_code(QRData { text: "HELLO".into(), error_correction_level:level, mask: MaskSetting::Auto, version: QRVersion::Auto, encoding_mode: EncodingMode::Auto }).unwrap().matrix;
             let (read_level, _) = read_format_information(matrix.modules(), matrix.size()).unwrap();
             assert_eq!(read_level, level);
             assert_eq!(decode_modules(matrix.modules()), Ok("HELLO".to_string()));
@@ -261,13 +260,12 @@ mod tests {
         use ErrorCorrectionLevel::*;
         for version in 1..=40u8 {
             for level in [L, M, Q, H] {
-                let qr_version = QRVersion::try_from(version).unwrap();
                 // 3 bytes covers the longest Byte mode header.
-                let original: String = (0..data_codewords(qr_version, level) - 3)
+                let original: String = (0..data_codewords(version, level) - 3)
                     .map(|i| char::from(b'!' + (i % 90) as u8))
                     .collect();
                 let mask = MaskSetting::Exact(version % 8);
-                let matrix = create_qr_code(&original, level, Some(EncodingMode::Byte), Some(qr_version), Some(mask)).unwrap();
+                let matrix = create_qr_code(QRData { text: original.clone(), error_correction_level:level, encoding_mode: EncodingMode::Byte, version: QRVersion::Exact(version), mask}).unwrap().matrix;
                 assert_eq!(decode_modules(matrix.modules()).as_ref(), Ok(&original), "version {version} at {level:?}");
             }
         }
@@ -277,7 +275,7 @@ mod tests {
     fn decode_modules_repairs_damaged_data_modules() {
         // 1-M has 10 EC codewords, so it can repair errors in up to 5 of them.
         let mut modules = scanned("01234567", 3);
-        let positions = data_module_positions(QRVersion::try_from(1).unwrap());
+        let positions = data_module_positions(1);
         for codeword in 0..5 {
             toggle(&mut modules, 21, positions[codeword * 8]);
         }
@@ -287,7 +285,7 @@ mod tests {
     #[test]
     fn decode_modules_reports_damage_beyond_what_error_correction_can_repair() {
         let mut modules = scanned("01234567", 3);
-        for position in data_module_positions(QRVersion::try_from(1).unwrap()) {
+        for position in data_module_positions(1) {
             toggle(&mut modules, 21, position);
         }
         assert_eq!(decode_modules(&modules), Err(DecodeError::UncorrectableBlock));
@@ -338,7 +336,7 @@ mod tests {
     #[test]
     fn decodes_the_iso_18004_numeric_example() {
         let codewords = [0x10, 0x20, 0x0C, 0x56, 0x61, 0x80, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11];
-        assert_eq!(decode_segments(&codewords, QRVersion::try_from(1).unwrap()), Ok("01234567".to_string()));
+        assert_eq!(decode_segments(&codewords, 1), Ok("01234567".to_string()));
     }
 
     #[test]
@@ -350,7 +348,7 @@ mod tests {
             write_bits(&mut bits, value, bit_length);
         }
         let codewords = bits_to_bytes_for_test(&bits);
-        assert_eq!(decode_segments(&codewords, QRVersion::try_from(1).unwrap()), Ok("AC-42".to_string()));
+        assert_eq!(decode_segments(&codewords, 1), Ok("AC-42".to_string()));
     }
 
     #[test]
@@ -362,7 +360,7 @@ mod tests {
         write_bits(&mut bits, 0xC3, 8);
         write_bits(&mut bits, 0xA9, 8);
         let codewords = bits_to_bytes_for_test(&bits);
-        assert_eq!(decode_segments(&codewords, QRVersion::try_from(1).unwrap()), Ok("é".to_string()));
+        assert_eq!(decode_segments(&codewords, 1), Ok("é".to_string()));
     }
 
     #[test]
@@ -373,18 +371,18 @@ mod tests {
         write_bits(&mut bits, 1, 8);
         write_bits(&mut bits, 0x0D9F, 13);
         let codewords = bits_to_bytes_for_test(&bits);
-        assert_eq!(decode_segments(&codewords, QRVersion::try_from(1).unwrap()), Ok("点".to_string()));
+        assert_eq!(decode_segments(&codewords, 1), Ok("点".to_string()));
     }
 
     #[test]
     fn stops_at_a_terminator_without_erroring_on_padding() {
         let codewords = [0x10, 0x20, 0x0C, 0x56, 0x61, 0x80, 0xEC, 0x11];
-        assert_eq!(decode_segments(&codewords, QRVersion::try_from(1).unwrap()), Ok("01234567".to_string()));
+        assert_eq!(decode_segments(&codewords, 1), Ok("01234567".to_string()));
     }
 
     #[test]
     fn empty_data_decodes_to_an_empty_string() {
-        assert_eq!(decode_segments(&[], QRVersion::try_from(1).unwrap()), Ok(String::new()));
+        assert_eq!(decode_segments(&[], 1), Ok(String::new()));
     }
 
     /// Pads `bits` to a byte boundary and packs it.

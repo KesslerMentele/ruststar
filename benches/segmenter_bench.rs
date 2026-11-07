@@ -1,7 +1,7 @@
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use ruststar::services::qr_code::{segmenter::segment, ErrorCorrectionLevel, QRVersion, VersionChoice};
+use ruststar::services::qr_code::{segmenter::segment, ErrorCorrectionLevel, QRVersion};
 
 // Input lengths in chars, from a short URL up to near version 40-L's limit for Kanji (the
 // tightest-packing mode per char that still fits at 1500).
@@ -26,28 +26,28 @@ fn input(pattern: &str, length: usize) -> String {
 // group, plus the capacity lookups) as two series of the same group, so criterion plots them side
 // by side and the gap is Auto's overhead.
 fn bench_segment(c: &mut Criterion) {
-    let version_40 = QRVersion::try_from(40).unwrap();
+    let version_40 = QRVersion::Exact(40);
 
     for (name, pattern) in INPUTS {
         let mut group = c.benchmark_group(format!("segment/{name}"));
         for length in LENGTHS {
             let data = input(pattern, length);
             // A bench input that doesn't fit would only measure the error path.
-            segment(&data, VersionChoice::Auto, ErrorCorrectionLevel::L)
+            segment(&data, QRVersion::Auto, ErrorCorrectionLevel::L)
                 .expect("bench inputs should fit version 40-L");
 
             group.bench_with_input(BenchmarkId::new("fixed_v40", length), &data, |b, data| {
                 b.iter(|| {
                     black_box(segment(
                         black_box(data),
-                        VersionChoice::Fixed(version_40),
+                        version_40,
                         ErrorCorrectionLevel::L,
                     ))
                 });
             });
             group.bench_with_input(BenchmarkId::new("auto", length), &data, |b, data| {
                 b.iter(|| {
-                    black_box(segment(black_box(data), VersionChoice::Auto, ErrorCorrectionLevel::L))
+                    black_box(segment(black_box(data), QRVersion::Auto, ErrorCorrectionLevel::L))
                 });
             });
         }

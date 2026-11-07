@@ -17,7 +17,7 @@
 
 use std::ops::RangeInclusive;
 use bitvec::prelude::*;
-use crate::services::qr_code::{ErrorCorrectionLevel, MaskSetting, QRVersion};
+use crate::services::qr_code::{ErrorCorrectionLevel, MaskSetting};
 use crate::services::qr_code::penalty_score::penalty_score;
 
 /// Alignment pattern center coordinates for each version, indexed by `version - 1`. Every pairing
@@ -140,7 +140,7 @@ pub(crate) fn format_information_positions(size: usize, i: usize) -> [(usize, us
 
 /// Every data module of a `version` symbol as `(row, col)`, in the order data bits are placed.
 /// The layout depends only on the version, so this needs no actual symbol to read from.
-pub(crate) fn data_module_positions(version: QRVersion) -> Vec<(usize, usize)> {
+pub(crate) fn data_module_positions(version: u8) -> Vec<(usize, usize)> {
     // The level only affects the contents of the format information, never which modules it owns.
     QRMatrix::new(version, ErrorCorrectionLevel::M).data_module_order().collect()
 }
@@ -159,7 +159,7 @@ fn bch_version_information(version: u32) -> u32 {
 /// which of those modules belong to a function pattern.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct QRMatrix {
-    version: QRVersion,
+    version: u8,
     error_correction_level: ErrorCorrectionLevel,
     size: usize,
     /// `true` is dark.
@@ -172,8 +172,8 @@ pub(crate) struct QRMatrix {
 
 impl QRMatrix {
     /// An all-light matrix for `version`, with no function patterns drawn.
-    pub(crate) fn new_empty(version: QRVersion, error_correction_level: ErrorCorrectionLevel) -> Self {
-        let size = <QRVersion as Into<usize>>::into(version) * 4 + 17;
+    pub(crate) fn new_empty(version: u8, error_correction_level: ErrorCorrectionLevel) -> Self {
+        let size = version as usize * 4 + 17;
         QRMatrix {
             version,
             error_correction_level,
@@ -187,7 +187,7 @@ impl QRMatrix {
     /// A matrix for `version` with every function pattern drawn, the version information
     /// written (version 7+), and the format information area reserved (left light until
     /// `set_mask`/`with_mask` picks a mask and fills it in).
-    pub(crate) fn new(version: QRVersion, error_correction_level: ErrorCorrectionLevel) -> Self {
+    pub(crate) fn new(version: u8, error_correction_level: ErrorCorrectionLevel) -> Self {
         let mut matrix = QRMatrix::new_empty(version, error_correction_level);
         matrix.draw_finder_patterns();
         matrix.draw_separators();
@@ -206,7 +206,7 @@ impl QRMatrix {
     }
 
     /// The version this matrix was built for.
-    pub(crate) fn version(&self) -> QRVersion {
+    pub(crate) fn version(&self) -> u8 {
         self.version
     }
 
@@ -280,7 +280,7 @@ impl QRMatrix {
     /// center that doesn't overlap a finder pattern. Those on row or column 6 overlap the timing
     /// patterns, but agree with them module for module, since every center is even.
     fn draw_alignment_patterns(&mut self) {
-        let coordinates:&[u8] = ALIGNMENT_PATTERN_COORDINATES[<QRVersion as Into<usize>>::into(self.version) - 1];
+        let coordinates:&[u8] = ALIGNMENT_PATTERN_COORDINATES[self.version as usize - 1];
         let (Some(&first), Some(&last)) = (coordinates.first(), coordinates.last()) else {
             return;
         };
@@ -296,7 +296,7 @@ impl QRMatrix {
 
     /// The single module above the bottom-left finder's separator that is always dark.
     fn draw_dark_module(&mut self) {
-        self.set_function(<QRVersion as Into<usize>>::into(self.version) * 4 + 9, 8, true);
+        self.set_function(self.version as usize * 4 + 9, 8, true);
     }
 
     /// The two copies of the 15 format information modules: wrapped around the top-left finder
@@ -317,7 +317,7 @@ impl QRMatrix {
     /// The two 6x3 copies of the version information, above the bottom-left finder and left of
     /// the top-right finder. Only version 7 and up carry it.
     fn reserve_version_information(&mut self) {
-        if <QRVersion as Into<usize>>::into(self.version) < 7 {
+        if self.version < 7 {
             return;
         }
         for i in 0..6 {
@@ -435,7 +435,7 @@ impl QRMatrix {
                 self.write_format_information(val);
                 Ok(())
             }
-            MaskSetting::ChooseBest => {
+            MaskSetting::Auto => {
                 // try all the masks and select the mask with the lowest penalty
                 let value = (0..8).map( |mask| {
                     let proposal = &self.with_mask(mask).unwrap(); // This is only ever iterating on 0..8, guaranteed safe
@@ -465,7 +465,6 @@ impl QRMatrix {
 mod tests {
     use super::*;
     use crate::services::qr_code::capacity::raw_data_modules;
-    use crate::services::qr_code::QRVersion;
 
     /// Renders a region as rows of `#` (dark function), `.` (light function) or ` ` (not a
     /// function module).
@@ -484,14 +483,14 @@ mod tests {
 
     #[test]
     fn size_grows_by_four_per_version() {
-        assert_eq!(QRMatrix::new_empty(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M).size(), 21);
-        assert_eq!(QRMatrix::new_empty(QRVersion::try_from(40).unwrap(), ErrorCorrectionLevel::M).size(), 177);
+        assert_eq!(QRMatrix::new_empty(1, ErrorCorrectionLevel::M).size(), 21);
+        assert_eq!(QRMatrix::new_empty(40, ErrorCorrectionLevel::M).size(), 177);
     }
 
     #[test]
     fn top_left_corner_of_version_1() {
         // Finder, separator, timing modules at (6, 8) and (8, 6), and the reserved format area.
-        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         assert_eq!(
             render(&matrix, 0..=8, 0..=8),
             [
@@ -510,7 +509,7 @@ mod tests {
 
     #[test]
     fn finder_patterns_sit_in_three_corners() {
-        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         let finder = ["#######", "#.....#", "#.###.#", "#.###.#", "#.###.#", "#.....#", "#######"];
         assert_eq!(render(&matrix, 0..=6, 14..=20), finder);
         assert_eq!(render(&matrix, 14..=20, 0..=6), finder);
@@ -520,7 +519,7 @@ mod tests {
 
     #[test]
     fn separators_border_the_inner_sides_of_each_finder() {
-        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         for i in 0..8 {
             for (row, col) in [(7, i), (i, 7), (7, 20 - i), (i, 13), (13, i), (20 - i, 7)] {
                 assert!(matrix.is_function(row, col) && !matrix.is_dark(row, col), "({row}, {col})");
@@ -530,7 +529,7 @@ mod tests {
 
     #[test]
     fn timing_patterns_alternate_between_the_separators() {
-        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         assert_eq!(render(&matrix, 6..=6, 7..=13), [".#.#.#."]);
         assert_eq!(render(&matrix, 7..=13, 6..=6), [".", "#", ".", "#", ".", "#", "."]);
     }
@@ -538,7 +537,7 @@ mod tests {
     #[test]
     fn dark_module_sits_above_the_bottom_left_separator() {
         for version in [1, 7, 40] {
-            let matrix = QRMatrix::new(QRVersion::try_from(version).unwrap(), ErrorCorrectionLevel::M);
+            let matrix = QRMatrix::new(version, ErrorCorrectionLevel::M);
             let row = version as usize * 4 + 9;
             assert!(matrix.is_function(row, 8) && matrix.is_dark(row, 8), "version {version}");
             assert_eq!(row, matrix.size() - 8);
@@ -547,13 +546,13 @@ mod tests {
 
     #[test]
     fn version_1_has_no_alignment_pattern() {
-        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         assert!(!matrix.is_function(14, 14));
     }
 
     #[test]
     fn version_2_has_one_alignment_pattern() {
-        let matrix = QRMatrix::new(QRVersion::try_from(2).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(2, ErrorCorrectionLevel::M);
         assert!(is_alignment_center(&matrix, 18, 18));
     }
 
@@ -565,7 +564,7 @@ mod tests {
     #[test]
     fn alignment_patterns_skip_the_finder_corners() {
         // Version 7's coordinates are 6, 22, 38: nine pairings, less the three finder corners.
-        let matrix = QRMatrix::new(QRVersion::try_from(7).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(7, ErrorCorrectionLevel::M);
         let centers: Vec<(usize, usize)> = [6, 22, 38]
             .into_iter()
             .flat_map(|row| [6, 22, 38].map(|col| (row, col)))
@@ -582,7 +581,7 @@ mod tests {
     #[test]
     fn alignment_patterns_agree_with_the_timing_patterns() {
         // The (6, 22) alignment pattern in version 7 crosses row 6's timing pattern.
-        let matrix = QRMatrix::new(QRVersion::try_from(7).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(7, ErrorCorrectionLevel::M);
         for col in 8..matrix.size() - 8 {
             assert_eq!(matrix.is_dark(6, col), col % 2 == 0, "column {col}");
         }
@@ -594,16 +593,16 @@ mod tests {
             let coordinates = ALIGNMENT_PATTERN_COORDINATES[version as usize - 1];
             assert_eq!(coordinates.len(), version as usize / 7 + 2, "version {version}");
             assert_eq!(coordinates[0], 6);
-            assert_eq!(*coordinates.last().unwrap() as usize, QRMatrix::new_empty(QRVersion::try_from(version).unwrap(), ErrorCorrectionLevel::M).size() - 7);
+            assert_eq!(*coordinates.last().unwrap() as usize, QRMatrix::new_empty(version, ErrorCorrectionLevel::M).size() - 7);
         }
     }
 
     #[test]
     fn version_information_is_reserved_from_version_7() {
-        let below = QRMatrix::new(QRVersion::try_from(6).unwrap(), ErrorCorrectionLevel::M);
+        let below = QRMatrix::new(6, ErrorCorrectionLevel::M);
         assert!(!below.is_function(0, below.size() - 11));
 
-        let matrix = QRMatrix::new(QRVersion::try_from(7).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(7, ErrorCorrectionLevel::M);
         let size = matrix.size();
         for i in 0..6 {
             for j in size - 11..size - 8 {
@@ -614,7 +613,7 @@ mod tests {
 
     #[test]
     fn data_order_starts_upwards_from_the_bottom_right_corner() {
-        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         let order: Vec<_> = matrix.data_module_order().take(4).collect();
         assert_eq!(order, [(20, 20), (20, 19), (19, 20), (19, 19)]);
     }
@@ -623,7 +622,7 @@ mod tests {
     fn data_order_turns_downwards_below_the_top_right_format_area() {
         // The first strip runs rows 20 up to 9 (24 modules); row 8 is format information, so the
         // next strip starts back down at row 9, in columns 18 and 17.
-        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         let order: Vec<_> = matrix.data_module_order().skip(22).take(4).collect();
         assert_eq!(order, [(9, 20), (9, 19), (9, 18), (9, 17)]);
     }
@@ -631,7 +630,7 @@ mod tests {
     #[test]
     fn data_order_skips_the_vertical_timing_column() {
         // Version 1's last three strips are columns 5-4 (down), 3-2 (up) and 1-0 (down).
-        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         let order: Vec<_> = matrix.data_module_order().collect();
         assert!(order.iter().all(|&(_, col)| col != 6));
         let last_strip_start = order.iter().position(|&(_, col)| col <= 5).unwrap();
@@ -642,7 +641,7 @@ mod tests {
     #[test]
     fn data_order_visits_every_data_module_exactly_once() {
         for version in 1..=40u8 {
-            let matrix = QRMatrix::new(QRVersion::try_from(version).unwrap(), ErrorCorrectionLevel::M);
+            let matrix = QRMatrix::new(version, ErrorCorrectionLevel::M);
             let order: Vec<_> = matrix.data_module_order().collect();
             let distinct: std::collections::HashSet<_> = order.iter().collect();
             assert_eq!(order.len(), raw_data_modules(version.try_into().unwrap()), "version {version}");
@@ -652,7 +651,7 @@ mod tests {
 
     #[test]
     fn place_data_writes_bits_in_data_order() {
-        let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let mut matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         let bits = bitvec![u8, Lsb0; 1, 0, 1, 1, 0, 0, 1];
         matrix.place_data(&bits);
         let placed: Vec<bool> = matrix.data_module_order().take(bits.len()).map(|(row, col)| matrix.is_dark(row, col)).collect();
@@ -661,9 +660,9 @@ mod tests {
 
     #[test]
     fn place_data_leaves_function_modules_alone() {
-        let blank = QRMatrix::new(QRVersion::try_from(7).unwrap(), ErrorCorrectionLevel::M);
+        let blank = QRMatrix::new(7, ErrorCorrectionLevel::M);
         let mut matrix = blank.clone();
-        let capacity = raw_data_modules(QRVersion { version: 7});
+        let capacity = raw_data_modules(7);
         matrix.place_data(&bitvec![u8, Lsb0; 1; capacity]);
         for row in 0..matrix.size() {
             for col in 0..matrix.size() {
@@ -679,7 +678,7 @@ mod tests {
     #[test]
     fn place_data_leaves_the_remainder_bits_light() {
         // Version 2 has 359 data modules: 44 codewords (352 bits) and 7 remainder bits.
-        let mut matrix = QRMatrix::new(QRVersion::try_from(2).unwrap(), ErrorCorrectionLevel::M);
+        let mut matrix = QRMatrix::new(2, ErrorCorrectionLevel::M);
         matrix.place_data(&bitvec![u8, Lsb0; 1; 352]);
         let dark: Vec<bool> = matrix.data_module_order().map(|(row, col)| matrix.is_dark(row, col)).collect();
         assert!(dark[..352].iter().all(|&d| d));
@@ -690,15 +689,15 @@ mod tests {
     #[test]
     #[should_panic(expected = "209 bits don't fit in 208 data modules")]
     fn place_data_rejects_more_bits_than_data_modules() {
-        let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let mut matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         matrix.place_data(&bitvec![u8, Lsb0; 0; 209]);
     }
 
     #[test]
     fn place_data_accepts_create_qr_code_bits_output() {
-        use crate::services::qr_code::{create_qr_code_bits, EncodingMode, ErrorCorrectionLevel};
-        let bits = create_qr_code_bits("01234567", ErrorCorrectionLevel::M, Some(EncodingMode::Segmented), Some(QRVersion { version: 1})).unwrap().bits;
-        let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        use crate::services::qr_code::{create_qr_code_bits, EncodingMode, ErrorCorrectionLevel, MaskSetting, QRData, QRVersion};
+        let bits = create_qr_code_bits(&QRData::new("01234567", ErrorCorrectionLevel::M, EncodingMode::Segmented, QRVersion::Exact(1), MaskSetting::Auto)).unwrap().bits;
+        let mut matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         matrix.place_data(&bits);
         // Mode indicator 0001: the first three modules light, the fourth dark.
         let first: Vec<bool> = matrix.data_module_order().take(4).map(|(row, col)| matrix.is_dark(row, col)).collect();
@@ -709,7 +708,7 @@ mod tests {
     fn function_patterns_leave_exactly_the_data_modules_free() {
         // Cross-checks every pattern's footprint against the capacity tables' module count.
         for version in 1..=40u8 {
-            let matrix = QRMatrix::new(QRVersion::try_from(version).unwrap(), ErrorCorrectionLevel::M);
+            let matrix = QRMatrix::new(version, ErrorCorrectionLevel::M);
             let free = matrix.size() * matrix.size() - matrix.function.count_ones();
             assert_eq!(free, raw_data_modules(version.try_into().unwrap()), "version {version}");
         }
@@ -742,7 +741,7 @@ mod tests {
 
     #[test]
     fn version_information_matches_the_bch_codeword() {
-        let matrix = QRMatrix::new(QRVersion::try_from(7).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(7, ErrorCorrectionLevel::M);
         let bits = bch_version_information(7);
         let size = matrix.size();
         for i in 0..18usize {
@@ -759,7 +758,7 @@ mod tests {
         let col8_rows = [0, 1, 2, 3, 4, 5, 7, 8, 14, 15, 16, 17, 18, 19, 20];
         let row8_cols = [20, 19, 18, 17, 16, 15, 14, 13, 7, 5, 4, 3, 2, 1, 0];
 
-        let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let mut matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         matrix.set_mask(MaskSetting::Exact(0)).unwrap();
         let expected = bch_format_information(0b00_000); // M, mask 0
 
@@ -772,7 +771,7 @@ mod tests {
 
     #[test]
     fn set_mask_toggles_data_modules_matching_the_predicate() {
-        let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let mut matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         matrix.set_mask(MaskSetting::Exact(0)).unwrap(); // (row + col) % 2 == 0
         // The first two data modules in placement order (see `data_order_starts_upwards...`).
         assert!(matrix.is_dark(20, 20), "20 + 20 is even");
@@ -784,7 +783,7 @@ mod tests {
         // Every function module outside the format information band (row 8 / column 8, which
         // legitimately changes with the mask — see `set_mask_writes_format_information_at_the_
         // spec_positions`): finders, separators, timing and alignment patterns.
-        let mut matrix = QRMatrix::new(QRVersion::try_from(7).unwrap(), ErrorCorrectionLevel::M);
+        let mut matrix = QRMatrix::new(7, ErrorCorrectionLevel::M);
         let is_outside_format_band = |row: usize, col: usize| row != 8 && col != 8;
         let before: Vec<bool> = (0..matrix.size())
             .flat_map(|row| (0..matrix.size()).map(move |col| (row, col)))
@@ -804,12 +803,12 @@ mod tests {
     fn set_mask_undoes_the_previous_mask_before_applying_a_new_one() {
         let bits = bitvec![u8, Lsb0; 1, 0, 1, 1, 0, 0, 1, 0, 1, 1];
 
-        let mut switched = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let mut switched = QRMatrix::new(1, ErrorCorrectionLevel::M);
         switched.place_data(&bits);
         switched.set_mask(MaskSetting::Exact(3)).unwrap();
         switched.set_mask(MaskSetting::Exact(5)).unwrap();
 
-        let mut direct = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let mut direct = QRMatrix::new(1, ErrorCorrectionLevel::M);
         direct.place_data(&bits);
         direct.set_mask(MaskSetting::Exact(5)).unwrap();
 
@@ -818,7 +817,7 @@ mod tests {
 
     #[test]
     fn mask_returns_the_currently_set_pattern() {
-        let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let mut matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         assert_eq!(matrix.mask(), None);
         matrix.set_mask(MaskSetting::Exact(2)).unwrap();
         assert_eq!(matrix.mask(), Some(2));
@@ -826,7 +825,7 @@ mod tests {
 
     #[test]
     fn with_mask_returns_the_masked_bits_without_changing_the_matrix() {
-        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         let size = matrix.size();
         let modules = matrix.with_mask(0).unwrap();
         assert_eq!(modules.len(), size * size);
@@ -838,7 +837,7 @@ mod tests {
     #[test]
     fn with_mask_matches_set_mask_on_a_clone() {
         let bits = bitvec![u8, Lsb0; 1, 0, 1, 1, 0, 0, 1, 0, 1, 1];
-        let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let mut matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         matrix.place_data(&bits);
 
         let via_with_mask = matrix.with_mask(4).unwrap();
@@ -851,14 +850,14 @@ mod tests {
 
     #[test]
     fn set_mask_rejects_patterns_above_7() {
-        let mut matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let mut matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         assert_eq!(matrix.set_mask(MaskSetting::Exact(8)), Err(MaskError::InvalidMaskVersion(8)));
         assert_eq!(matrix.mask(), None, "a rejected pattern must not become the matrix's mask");
     }
 
     #[test]
     fn with_mask_rejects_patterns_above_7() {
-        let matrix = QRMatrix::new(QRVersion::try_from(1).unwrap(), ErrorCorrectionLevel::M);
+        let matrix = QRMatrix::new(1, ErrorCorrectionLevel::M);
         assert_eq!(matrix.with_mask(9), Err(MaskError::InvalidMaskVersion(9)));
     }
 }

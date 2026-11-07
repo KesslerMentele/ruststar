@@ -1,6 +1,6 @@
 use bitvec::prelude::*;
 use crate::services::qr_code::{
-    ErrorCorrectionLevel, QRVersion, bits::bits_to_bytes, 
+    ErrorCorrectionLevel, bits::bits_to_bytes, 
     capacity::{ec_block_info, EcBlockInfo}, 
     gf_math::{error_correction_codewords, EcLength}
 };
@@ -36,7 +36,7 @@ fn generate_error_correction_bytes(blocks: &[&[u8]], ec_len: EcLength, ec_codewo
 
 /// Builds the final, interleaved codeword sequence ready for placement: data codewords
 /// column-wise across blocks, then error correction codewords the same way.
-pub(crate) fn interleave(data: &BitSlice<u8, Lsb0>, version: QRVersion, error_correction_level: ErrorCorrectionLevel) -> BitVec<u8, Lsb0> {
+pub(crate) fn interleave(data: &BitSlice<u8, Lsb0>, version: u8, error_correction_level: ErrorCorrectionLevel) -> BitVec<u8, Lsb0> {
     let data = bits_to_bytes(data);
     let data = data.as_slice();
 
@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn deinterleave_undoes_interleave_across_unequal_blocks() {
         // 5-Q: two blocks of 15 data codewords, then two of 16, each with 18 EC codewords.
-        let version = QRVersion::try_from(5).unwrap();
+        let version = 5;
         let level = ErrorCorrectionLevel::Q;
         let info = ec_block_info(version, level);
         let data: Vec<u8> = (0..data_codewords(version, level) as u8).collect();
